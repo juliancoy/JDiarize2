@@ -1,0 +1,75 @@
+#version 450
+#define THREADS_PER_WORKGROUP 128u
+#define RING_BUFFER_MAX_SIZE  4096u
+#define PI 3.1415926
+
+layout(push_constant) uniform Push {
+    uint  startPos;
+    uint  endPos;
+    float sampleFrequency;
+    float multiple;
+} pc;
+
+layout(std430, set = 0, binding = 0) readonly  buffer XBuf    { float input_buffer[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer LBuf    { float output_buffer[]; };
+layout(std430, set = 0, binding = 2) readonly  buffer FreqBuf { float frequency[];    };
+
+shared float ringbuffer[RING_BUFFER_MAX_SIZE];
+
+layout (local_size_x = THREADS_PER_WORKGROUP) in;
+
+uint wrapi(int x, uint m) {
+    int r = x % int(m);
+    return uint(r < 0 ? r + int(m) : r);
+}
+
+void main() {
+    uint workGroup_ix = gl_WorkGroupID.x;
+    uint thread_ix    = gl_LocalInvocationID.x;
+
+    // Lane-strided initialization of the entire shared ring
+    for (uint i = thread_ix; i < RING_BUFFER_MAX_SIZE; i += THREADS_PER_WORKGROUP) {
+        ringbuffer[i] = 0.0;
+    }
+    barrier(); // make the zeros visible to all lanes
+
+    float f = frequency[workGroup_ix];
+    if (f <= 0.0) return;
+
+    // Compute delay length and align to lane multiple for per-thread ring logic
+    int ringBufferSize = int((1.0 / f) * pc.multiple);
+    ringBufferSize = (ringBufferSize / int(THREADS_PER_WORKGROUP)) * int(THREADS_PER_WORKGROUP);
+    ringBufferSize = clamp(ringBufferSize,
+                           int(THREADS_PER_WORKGROUP),
+                           int(RING_BUFFER_MAX_SIZE - THREADS_PER_WORKGROUP));
+
+    float normalFactor = inversesqrt(pc.multiple / f);
+
+    uint signalReadIndex = thread_ix + pc.startPos;
+    uint ring_wr_ix      = thread_ix; // lane-strided head
+
+    while (signalReadIndex < pc.endPos) {
+        float x = input_buffer[signalReadIndex];
+
+        // Direct sin/cos per sample (you asked not to use recurrence)
+        float phase = 2.0 * PI * (float(signalReadIndex) * f) / pc.sampleFrequency;
+        float c = cos(phase);
+        float s = sin(phase);
+
+        float re  =  x * c * normalFactor;
+        float im  = -x * s * normalFactor;
+        float mag = sqrt(re*re + im*im);
+
+        // Read delayed value from same lane’s history
+        uint read_ix = wrapi(int(ring_wr_ix) - ringBufferSize, RING_BUFFER_MAX_SIZE);
+        float ringSub = ringbuffer[read_ix];
+
+        output_buffer[signalReadIndex] = mag - ringSub;
+
+        // Write current value into this lane’s slot and advance by lane stride
+        ringbuffer[ring_wr_ix] = mag;
+        ring_wr_ix = (ring_wr_ix + THREADS_PER_WORKGROUP) % RING_BUFFER_MAX_SIZE;
+
+        signalReadIndex += THREADS_PER_WORKGROUP;
+    }
+}

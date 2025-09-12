@@ -1,0 +1,1 @@
+g++ -std=c++17 -O2 -Wall -Wextra -I. -Ivulkan_headers/include -fsanitize=address -g main.cpp -lvulkan -o audio_processor
