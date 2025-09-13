@@ -8,20 +8,19 @@ from matplotlib.colors import LogNorm
 import sys
 import os
 
-def create_sine_wave(frequency=440.0, duration=1.0, sample_rate=44100, amplitude=0.5):
-    """Create a sine wave with the specified frequency and duration"""
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-    sine_wave = amplitude * np.sin(2 * np.pi * frequency * t)
-    return sine_wave.astype(np.float32), sample_rate
-
-def generate_logspace_frequencies(start_freq=20.0, end_freq=20000.0, num_freqs=128):
-    """Generate a logarithmic space of frequencies"""
-    return np.logspace(np.log10(start_freq), np.log10(end_freq), num_freqs, dtype=np.float32)
 
 def create_heatmap(data, frequencies, sample_rate, output_path="heatmap.png"):
     """Create and save a heatmap visualization"""
-    # Normalize the data for better visualization
-    data_normalized = (data - data.min()) / (data.max() - data.min() + 1e-8)
+    # Handle NaN and infinite values
+    data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # Check if data has valid range for normalization
+    if np.all(data == 0) or (data.max() - data.min()) == 0:
+        # All zeros or constant data, use zeros for normalized data
+        data_normalized = np.zeros_like(data)
+    else:
+        # Normalize the data for better visualization
+        data_normalized = (data - data.min()) / (data.max() - data.min() + 1e-8)
     
     # Create time axis (in seconds)
     time_axis = np.linspace(0, len(data) / sample_rate, len(data))
@@ -58,7 +57,7 @@ def main():
             size_t size;
         } FloatVector;
         
-        int loiacono(FloatVector* audioData, float sampleRate, FloatVector* outputData, FloatVector* frequencies);
+        int loiacono(FloatVector* audioData, float sampleRate, FloatVector* outputData, FloatVector* frequencies, float multiple);
     """)
     
     # Load the shared library
@@ -72,12 +71,24 @@ def main():
     
     # Create a 440Hz sine wave
     print("Generating 440Hz sine wave...")
-    audio_data, sample_rate = create_sine_wave(frequency=440.0, duration=2.0)
+
+    """Create a sine wave with the specified frequency and duration"""
+    frequency=440.0
+    duration=1.0
+    sample_rate=44100
+    amplitude=0.5
+    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    audio_data = amplitude * np.sin(2 * np.pi * frequency * t)
+
     print(f"Generated {len(audio_data)} samples at {sample_rate}Hz sample rate")
     
     # Generate logspace of 128 frequencies
-    print("Generating logspace of 128 frequencies...")
-    frequencies = generate_logspace_frequencies(num_freqs=128)
+    start_freq=20.0
+    end_freq=20000.0
+    num_freqs=32
+    print(f"Generating logspace of {num_freqs} frequencies...")
+    """Generate a logarithmic space of frequencies"""
+    frequencies = np.logspace(np.log10(start_freq), np.log10(end_freq), num_freqs, dtype=np.float32)
     print(f"Generated frequencies from {frequencies[0]:.1f}Hz to {frequencies[-1]:.1f}Hz")
     
     # Prepare output data buffer - we need space for all frequencies x time samples
@@ -97,10 +108,11 @@ def main():
     freq_vec = ffi.new("FloatVector*")
     freq_vec.data = ffi.cast("float*", ffi.from_buffer(frequencies))
     freq_vec.size = len(frequencies)
+    multiple = 5
     
     # Call the loiacono function
     print("Calling loiacono function...")
-    result = lib.loiacono(audio_vec, sample_rate, output_vec, freq_vec)
+    result = lib.loiacono(audio_vec, sample_rate, output_vec, freq_vec, multiple)
     
     if result != 0:
         print(f"loiacono function returned error code: {result}")
@@ -117,19 +129,35 @@ def main():
     print("Creating heatmap visualization...")
     create_heatmap(heatmap_data, frequencies, sample_rate, "loiacono_heatmap.png")
     
-    # Also save with OpenCV for comparison
-    heatmap_normalized = cv2.normalize(heatmap_data, None, 0, 255, cv2.NORM_MINMAX)
-    heatmap_uint8 = heatmap_normalized.astype(np.uint8)
-    heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_VIRIDIS)
-    
-    # Resize for better visualization
-    height, width = heatmap_colored.shape[:2]
-    new_height = 800
-    new_width = int(width * (new_height / height))
-    heatmap_resized = cv2.resize(heatmap_colored, (new_width, new_height))
-    
-    cv2.imwrite("loiacono_heatmap_cv2.png", heatmap_resized)
-    print("OpenCV heatmap saved to loiacono_heatmap_cv2.png")
+    # Also save with OpenCV for comparison (only if data is valid)
+    try:
+        # Handle any NaN/inf values in heatmap_data
+        heatmap_data_clean = np.nan_to_num(heatmap_data, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # Check if data has any non-zero values
+        if np.any(heatmap_data_clean != 0):
+            heatmap_normalized = cv2.normalize(heatmap_data_clean, None, 0, 255, cv2.NORM_MINMAX)
+            heatmap_uint8 = heatmap_normalized.astype(np.uint8)
+            heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_VIRIDIS)
+            
+            # Resize for better visualization (only if dimensions are valid)
+            height, width = heatmap_colored.shape[:2]
+            if height > 0 and width > 0:
+                new_height = 800
+                new_width = int(width * (new_height / height))
+                if new_width > 0 and new_height > 0:
+                    heatmap_resized = cv2.resize(heatmap_colored, (new_width, new_height))
+                    cv2.imwrite("loiacono_heatmap_cv2.png", heatmap_resized)
+                    print("OpenCV heatmap saved to loiacono_heatmap_cv2.png")
+                else:
+                    print("Skipping OpenCV heatmap: invalid resize dimensions")
+            else:
+                print("Skipping OpenCV heatmap: invalid image dimensions")
+        else:
+            print("Skipping OpenCV heatmap: all data is zero")
+    except Exception as e:
+        print(f"Error creating OpenCV heatmap: {e}")
+        print("Continuing without OpenCV heatmap")
     
     return 0
 

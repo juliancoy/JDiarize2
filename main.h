@@ -53,7 +53,7 @@ VkResult executeComputeShader(VkDevice device, VkQueue computeQueue, VkCommandBu
 VkResult readResultFromGPU(VkDevice device, VkDeviceMemory bufferMemory, float& result);
 
 // Loiacono function
-int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>* outputData, std::vector<float>* frequencies);
+int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>* outputData, std::vector<float>* frequencies, float multiple);
 
 // Cleanup helpers
 void cleanupComputeResources(VkDevice device, VkPipeline pipeline, VkPipelineLayout pipelineLayout,

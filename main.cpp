@@ -53,7 +53,7 @@ typedef struct {
 } FloatVector;
 
 // C-compatible wrapper function
-extern "C" int loiacono(FloatVector* audioData, float sampleRate, FloatVector* outputData, FloatVector* frequencies) {
+extern "C" int loiacono(FloatVector* audioData, float sampleRate, FloatVector* outputData, FloatVector* frequencies, float multiple) {
     // Convert FloatVector to std::vector
     if (!audioData || !outputData || !frequencies) {
         return 1; // Error: null pointers
@@ -67,7 +67,7 @@ extern "C" int loiacono(FloatVector* audioData, float sampleRate, FloatVector* o
                               static_cast<float*>(frequencies->data) + frequencies->size);
     
     // Call the C++ implementation
-    int result = loiacono(&audioVec, sampleRate, &outputVec, &freqVec);
+    int result = loiacono(&audioVec, sampleRate, &outputVec, &freqVec, multiple);
     
     // Copy results back to outputData (if the C++ function modified the vectors)
     if (result == 0) {
@@ -92,6 +92,7 @@ int main() {
     std::vector<float> audioData;
     uint32_t sampleRate = 0;
     uint16_t numChannels = 0;
+    float multiple = 10;
     if (!readAudioData("audio.wav", audioData, sampleRate, numChannels)) {
         std::cerr << "Failed to read audio data" << std::endl;
         return 1;
@@ -102,11 +103,11 @@ int main() {
     std::vector<float> outputData(audioData.size());
     // Use default frequency of 440 Hz
     std::vector<float> frequencies = { 440.0f };
-    loiacono(&audioData, sampleRate, &outputData, &frequencies);
+    loiacono(&audioData, sampleRate, &outputData, &frequencies, multiple);
 }
 
 int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>* outputData, 
-    std::vector<float> * frequencies){
+    std::vector<float> * frequencies, float multiple) {
     // Initialize Vulkan (returns compute queue family and the queue handle)
     VkInstance instance = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
@@ -331,7 +332,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     smci.pCode    = spirv.data();
 
     result = vkCreateShaderModule(device, &smci, nullptr, &shaderModule);
-    std::cout << "vkCreateShaderModule result: " << result << std::endl;
     VK_CHECK(result);
 
     VkPipelineShaderStageCreateInfo shaderStageInfo = {};
@@ -346,7 +346,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     pipelineInfo.layout = pipelineLayout;
 
     result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
-    std::cout << "vkCreateComputePipelines result: " << result << std::endl;
     if (result != VK_SUCCESS) {
         std::cerr << "Failed to create compute pipeline" << std::endl;
         if (g_debugMessenger != VK_NULL_HANDLE) {
@@ -368,7 +367,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     poolInfo.maxSets = 1;
 
     result = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
-    std::cout << "vkCreateDescriptorPool result: " << result << std::endl;
     VK_CHECK(result);
 
     // Allocate descriptor set
@@ -379,7 +377,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     allocInfo.pSetLayouts = &descriptorSetLayout;
 
     result = vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet);
-    std::cout << "vkAllocateDescriptorSets result: " << result << std::endl;
     VK_CHECK(result);
 
     // Command pool & buffer — use the SAME compute queue family index
@@ -388,7 +385,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     cmdPoolInfo.queueFamilyIndex = computeQueueFamilyIndex;
 
     result = vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &commandPool);
-    std::cout << "vkCreateCommandPool result: " << result << std::endl;
     VK_CHECK(result);
 
     VkCommandBufferAllocateInfo cmdBufferInfo = {};
@@ -398,7 +394,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     cmdBufferInfo.commandBufferCount = 1;
 
     result = vkAllocateCommandBuffers(device, &cmdBufferInfo, &commandBuffer);
-    std::cout << "vkAllocateCommandBuffers result: " << result << std::endl;
 
     if (result != VK_SUCCESS) {
         if (g_debugMessenger != VK_NULL_HANDLE) {
@@ -615,7 +610,7 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     pc.startPos         = 0u;
     pc.endPos           = static_cast<uint32_t>(audioData->size());
     pc.sampleFrequency  = static_cast<float>(sampleRate);
-    pc.multiple         = 4096.0f; // tweak as desired; ensure ringBufferSize <= RING_BUFFER_MAX_SIZE
+    pc.multiple         = multiple; // tweak as desired; ensure ringBufferSize <= RING_BUFFER_MAX_SIZE
 
     std::cout << "Device: " << device << std::endl;
     std::cout << "Command Buffer: " << commandBuffer << std::endl;
@@ -627,7 +622,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
     result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
-    std::cout << "vkBeginCommandBuffer result: " << result << std::endl;
     VK_CHECK(result);
 
     // Bind pipeline and descriptor set
@@ -658,7 +652,6 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     );
 
     result = vkEndCommandBuffer(commandBuffer);
-    std::cout << "vkEndCommandBuffer result: " << result << std::endl;
     VK_CHECK(result);
 
     // Submit to the provided compute queue
@@ -668,11 +661,9 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     submitInfo.pCommandBuffers = &commandBuffer;
 
     result = vkQueueSubmit(computeQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    std::cout << "vkQueueSubmit result: " << result << std::endl;
     VK_CHECK(result);
 
     result = vkQueueWaitIdle(computeQueue);
-    std::cout << "vkQueueWaitIdle result: " << result << std::endl;
     VK_CHECK(result);
 
     // Read back a sample result (for example, the first output sample)
