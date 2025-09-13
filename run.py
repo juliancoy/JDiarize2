@@ -80,8 +80,10 @@ def main():
     frequencies = generate_logspace_frequencies(num_freqs=128)
     print(f"Generated frequencies from {frequencies[0]:.1f}Hz to {frequencies[-1]:.1f}Hz")
     
-    # Prepare output data buffer
-    output_data = np.zeros_like(audio_data, dtype=np.float32)
+    # Prepare output data buffer - we need space for all frequencies x time samples
+    # Each frequency will produce output for the entire audio duration
+    total_output_size = len(audio_data) * len(frequencies)
+    output_data = np.zeros(total_output_size, dtype=np.float32)
     
     # Create FFI-compatible structures
     audio_vec = ffi.new("FloatVector*")
@@ -107,9 +109,9 @@ def main():
     print("Processing completed successfully!")
     print(f"Output data shape: {output_data.shape}")
     
-    # Reshape output for heatmap (assuming frequencies x time)
+    # Reshape output for heatmap (time x frequencies)
     # The loiacono function processes each frequency and stores results
-    heatmap_data = output_data.reshape(len(frequencies), -1)
+    heatmap_data = output_data.reshape(-1, len(frequencies))
     
     # Create and save heatmap
     print("Creating heatmap visualization...")

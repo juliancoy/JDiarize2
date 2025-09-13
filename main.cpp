@@ -46,6 +46,42 @@ void cleanupComputeResources(VkDevice device, VkPipeline pipeline, VkPipelineLay
     if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, pipeline, nullptr);
 }
 
+// C-compatible interface for Python FFI
+typedef struct {
+    void* data;
+    size_t size;
+} FloatVector;
+
+// C-compatible wrapper function
+extern "C" int loiacono(FloatVector* audioData, float sampleRate, FloatVector* outputData, FloatVector* frequencies) {
+    // Convert FloatVector to std::vector
+    if (!audioData || !outputData || !frequencies) {
+        return 1; // Error: null pointers
+    }
+    
+    std::vector<float> audioVec(static_cast<float*>(audioData->data), 
+                               static_cast<float*>(audioData->data) + audioData->size);
+    std::vector<float> outputVec(static_cast<float*>(outputData->data), 
+                                static_cast<float*>(outputData->data) + outputData->size);
+    std::vector<float> freqVec(static_cast<float*>(frequencies->data), 
+                              static_cast<float*>(frequencies->data) + frequencies->size);
+    
+    // Call the C++ implementation
+    int result = loiacono(&audioVec, sampleRate, &outputVec, &freqVec);
+    
+    // Copy results back to outputData (if the C++ function modified the vectors)
+    if (result == 0) {
+        // Ensure output vectors have the same size as expected
+        if (outputVec.size() == outputData->size) {
+            std::memcpy(outputData->data, outputVec.data(), outputVec.size() * sizeof(float));
+        } else {
+            return 2; // Error: size mismatch
+        }
+    }
+    
+    return result;
+}
+
 // ---------- Main ----------
 
 int main() {
@@ -379,15 +415,22 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     VkDeviceMemory inputBufferMemory = VK_NULL_HANDLE;
     VkDeviceMemory outputBufferMemory = VK_NULL_HANDLE;
 
-    // Create input & output buffers
-    VkBufferCreateInfo bufferInfo = {};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = audioData->size() * sizeof(float);
-    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // Create input buffer
+    VkBufferCreateInfo inputBufferCreateInfo = {};
+    inputBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    inputBufferCreateInfo.size = audioData->size() * sizeof(float);
+    inputBufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    inputBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    VK_CHECK(vkCreateBuffer(device, &bufferInfo, nullptr, &inputBuffer));
-    VK_CHECK(vkCreateBuffer(device, &bufferInfo, nullptr, &outputBuffer));
+    // Create output buffer - large enough for all frequencies
+    VkBufferCreateInfo outputBufferCreateInfo = {};
+    outputBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    outputBufferCreateInfo.size = audioData->size() * frequencies->size() * sizeof(float);
+    outputBufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    outputBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VK_CHECK(vkCreateBuffer(device, &inputBufferCreateInfo, nullptr, &inputBuffer));
+    VK_CHECK(vkCreateBuffer(device, &outputBufferCreateInfo, nullptr, &outputBuffer));
 
     // Allocate memory for input buffer
     VkMemoryRequirements memRequirementsIn{};
@@ -505,7 +548,7 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     // IMPORTANT: Initialize output buffer to 0.0f if shader accumulates into it
     {
         void* outPtr = nullptr;
-        VkResult mapRes = vkMapMemory(device, outputBufferMemory, 0, audioData->size() * sizeof(float), 0, &outPtr);
+        VkResult mapRes = vkMapMemory(device, outputBufferMemory, 0, audioData->size() * frequencies->size() * sizeof(float), 0, &outPtr);
         if (mapRes != VK_SUCCESS) {
             std::cerr << "Failed to map output buffer memory for initialization" << std::endl;
             cleanupComputeResources(device, pipeline, pipelineLayout, shaderModule,
@@ -520,7 +563,7 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
             cleanupVulkan(instance, device);
             return 1;
         }
-        std::memset(outPtr, 0, audioData->size() * sizeof(float));
+        std::memset(outPtr, 0, audioData->size() * frequencies->size() * sizeof(float));
         vkUnmapMemory(device, outputBufferMemory);
     }
 
@@ -643,10 +686,10 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     // Copy entire output buffer to output vector
     if (outputData != nullptr) {
         void* outputPtr;
-        VkResult mapResult = vkMapMemory(device, outputBufferMemory, 0, audioData->size() * sizeof(float), 0, &outputPtr);
+        VkResult mapResult = vkMapMemory(device, outputBufferMemory, 0, audioData->size() * frequencies->size() * sizeof(float), 0, &outputPtr);
         if (mapResult == VK_SUCCESS) {
-            outputData->resize(audioData->size());
-            std::memcpy(outputData->data(), outputPtr, audioData->size() * sizeof(float));
+            outputData->resize(audioData->size() * frequencies->size());
+            std::memcpy(outputData->data(), outputPtr, audioData->size() * frequencies->size() * sizeof(float));
             vkUnmapMemory(device, outputBufferMemory);
             std::cout << "Copied " << outputData->size() << " processed samples to output vector" << std::endl;
         } else {

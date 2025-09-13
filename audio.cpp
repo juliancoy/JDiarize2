@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <cstdint>
 
 
 // Simple WAV file reader (for 16-bit PCM WAV files)
