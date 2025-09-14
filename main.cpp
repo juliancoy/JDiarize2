@@ -416,11 +416,14 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     inputBufferCreateInfo.size = audioData->size() * sizeof(float);
     inputBufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     inputBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    std::cout << "Input buffer size: " << inputBufferCreateInfo.size << " bytes" << std::endl;
 
     // Create output buffer - large enough for all frequencies
     VkBufferCreateInfo outputBufferCreateInfo = {};
     outputBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     outputBufferCreateInfo.size = audioData->size() * frequencies->size() * sizeof(float);
+    std::cout << "Output buffer size: " << outputBufferCreateInfo.size << " bytes" << std::endl;
+
     outputBufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     outputBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -634,6 +637,7 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     // Dispatch compute
     // EACH WORKGROUP PROCESSES A SINGLE FREQUENCY!
     // So we launch one workgroup per frequency in X dimension.
+    std::cout << "Dispatching " << frequencyCount << " workgroups (one per frequency)" << std::endl;
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
     VkMemoryBarrier memBarrier{};

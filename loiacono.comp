@@ -1,7 +1,17 @@
 #version 450
+#extension GL_KHR_shader_subgroup_basic       : require
+#extension GL_KHR_shader_subgroup_ballot      : require
+#extension GL_KHR_shader_subgroup_arithmetic  : require
+
+// ----------------------- Tunables -----------------------
 #define THREADS_PER_WORKGROUP 128u
 #define RING_BUFFER_MAX_SIZE  4096u
 #define PI 3.1415926
+// Enable if you split one frequency across multiple workgroups (Y-dimension)
+#define USE_DECOUPLED_LOOKBACK 0
+// Upper bound on subgroups per WG (128 / min_subgroup_size 16 => 8)
+#define MAX_SUBGROUPS 8
+// -------------------------------------------------------
 
 layout(push_constant) uniform Push {
     uint  startPos;
@@ -14,62 +24,235 @@ layout(std430, set = 0, binding = 0) readonly  buffer XBuf    { float input_buff
 layout(std430, set = 0, binding = 1) writeonly buffer LBuf    { float output_buffer[]; };
 layout(std430, set = 0, binding = 2) readonly  buffer FreqBuf { float frequency[];    };
 
-shared float ringbuffer[RING_BUFFER_MAX_SIZE];
+#if USE_DECOUPLED_LOOKBACK
+// DLB helpers: one entry per (frequency, tile)
+layout(std430, set = 0, binding = 3) buffer DLBTilesReady { uint  dlb_ready[];   };  // 0/1 flags
+layout(std430, set = 0, binding = 4) buffer DLBTilesScan  { float dlb_prefix[];  };  // scanned tile sums (prefix of tiles)
+// Global prefix buffer so later tiles can read P[i-W] from earlier tiles
+layout(std430, set = 0, binding = 5) buffer PrefixBuf     { float prefix_buffer[]; }; // size = numFreq * (endPos-startPos)
+#endif
+
+shared float ringbuffer[RING_BUFFER_MAX_SIZE]; // used to hold P[i - W] in non-DLB path
+shared float sgTotals[MAX_SUBGROUPS];          // subgroup totals per iteration
+shared float iterCarry;                        // base added to this iteration’s scan
+
+// For DLB path: stage per-tile P in shared memory for same-tile lookbacks
+shared float tileP[THREADS_PER_WORKGROUP];
 
 layout (local_size_x = THREADS_PER_WORKGROUP) in;
 
-uint wrapi(int x, uint m) {
-    int r = x % int(m);
-    return uint(r < 0 ? r + int(m) : r);
-}
-
 void main() {
-    uint workGroup_ix = gl_WorkGroupID.x;
-    uint thread_ix    = gl_LocalInvocationID.x;
+    const uint WG   = THREADS_PER_WORKGROUP;
+    const uint tid  = gl_LocalInvocationID.x;
+    const uint sg   = gl_SubgroupID;
+    const uint lane = gl_SubgroupInvocationID;
 
-    // Lane-strided initialization of the entire shared ring
-    for (uint i = thread_ix; i < RING_BUFFER_MAX_SIZE; i += THREADS_PER_WORKGROUP) {
-        ringbuffer[i] = 0.0;
-    }
-    barrier(); // make the zeros visible to all lanes
-
-    float f = frequency[workGroup_ix];
+    const uint frequency_ix = gl_WorkGroupID.x;
+    float f = frequency[frequency_ix];
     if (f <= 0.0) return;
 
-    // Compute delay length and align to lane multiple for per-thread ring logic
-    int ringBufferSize = int((1.0 / f) * pc.multiple);
-    ringBufferSize = (ringBufferSize / int(THREADS_PER_WORKGROUP)) * int(THREADS_PER_WORKGROUP);
-    ringBufferSize = clamp(ringBufferSize,
-                           int(THREADS_PER_WORKGROUP),
-                           int(RING_BUFFER_MAX_SIZE - THREADS_PER_WORKGROUP));
+    // Zero shared ring (we'll use it for prefix lookback in non-DLB)
+    for (uint i = tid; i < RING_BUFFER_MAX_SIZE; i += WG) {
+        ringbuffer[i] = 0.0;
+    }
+    barrier();
 
+    // Window width (samples)
+    int   ringBufferSize_i = int((1.0 / f) * pc.multiple * pc.sampleFrequency);
+    uint  W = uint(max(ringBufferSize_i, 0));
     float normalFactor = inversesqrt(pc.multiple / f);
 
-    uint signalReadIndex = thread_ix + pc.startPos;
-    uint ring_wr_ix      = thread_ix; // lane-strided head
+#if !USE_DECOUPLED_LOOKBACK
+    // ==================== Single-WG (default) sliding window ====================
+    // This WG processes the entire stream by striding i += WG. We compute global
+    // inclusive prefix P(i) and output window(i) = P(i) - P(i-W).
+    uint signalReadIndex  = pc.startPos + tid;
+    uint writeBase        = frequency_ix * (pc.endPos - pc.startPos) + pc.startPos;
+    uint signalWriteIndex = writeBase + tid;
+
+    // ring indices stride by WG so each lane owns a lane-strided slot
+    uint ring_wr_ix = tid;
+    // Read head starts W behind, modulo the shared ring size
+    uint ring_rd_ix = (tid + RING_BUFFER_MAX_SIZE - (W % RING_BUFFER_MAX_SIZE)) % RING_BUFFER_MAX_SIZE;
+
+    if (tid == 0) iterCarry = 0.0;
+    barrier();
 
     while (signalReadIndex < pc.endPos) {
+        // ---- Load & per-sample math ----
         float x = input_buffer[signalReadIndex];
-
-        // Direct sin/cos per sample (you asked not to use recurrence)
-        float phase = 2.0 * PI * (float(signalReadIndex) * f) / pc.sampleFrequency;
+        float idxf  = float(signalReadIndex);
+        float phase = 2.0 * PI * (idxf * f) / pc.sampleFrequency;
         float c = cos(phase);
         float s = sin(phase);
-
         float re  =  x * c * normalFactor;
         float im  = -x * s * normalFactor;
         float mag = sqrt(re*re + im*im);
 
-        // Read delayed value from same lane’s history
-        uint read_ix = wrapi(int(ring_wr_ix) - ringBufferSize, RING_BUFFER_MAX_SIZE);
-        float ringSub = ringbuffer[read_ix];
+        // ---- Workgroup-wide scan for prefix P(i) ----
+        float laneVal = mag;
 
-        output_buffer[signalReadIndex] = mag - ringSub;
+        // Subgroup scan
+        float sgPrefix = subgroupExclusiveAdd(laneVal);
+        float sgSum    = subgroupAdd(laneVal);
 
-        // Write current value into this lane’s slot and advance by lane stride
-        ringbuffer[ring_wr_ix] = mag;
-        ring_wr_ix = (ring_wr_ix + THREADS_PER_WORKGROUP) % RING_BUFFER_MAX_SIZE;
+        // publish subgroup totals once
+        if (lane == gl_SubgroupSize() - 1) sgTotals[sg] = sgSum;
+        barrier();
 
-        signalReadIndex += THREADS_PER_WORKGROUP;
+        // sum totals of prior subgroups in this WG
+        float sgOffset = 0.0;
+        for (uint s = 0u; s < sg; ++s) sgOffset += sgTotals[s];
+
+        // Global inclusive prefix P(i) for this index i
+        float P = iterCarry + sgOffset + sgPrefix + laneVal;
+
+        // ---- Sliding window via prefix lookback ----
+        // Read P(i - W) from lane-strided shared ring (initialized to zero).
+        float P_prevW = ringbuffer[ring_rd_ix];
+        float window  = (W == 0u) ? P : (P - P_prevW);
+
+        // Output the window sum
+        output_buffer[signalWriteIndex] = window;
+
+        // Advance ring: store current P and bump heads by WG
+        ringbuffer[ring_wr_ix] = P;
+        ring_wr_ix = (ring_wr_ix + WG) % RING_BUFFER_MAX_SIZE;
+        ring_rd_ix = (ring_rd_ix + WG) % RING_BUFFER_MAX_SIZE;
+
+        // ---- Update iterCarry with the WG sum for the next stride step ----
+        if (lane == 0) sgTotals[sg] = sgSum;
+        barrier();
+        if (tid == 0) {
+            float wgSum = 0.0;
+            for (uint s = 0u; s < gl_NumSubgroups; ++s) wgSum += sgTotals[s];
+            iterCarry += wgSum;
+        }
+        barrier();
+
+        signalReadIndex  += WG;
+        signalWriteIndex += WG;
     }
+
+#else
+    // ==================== Single-pass DLB sliding window across tiles ====================
+    // Grid: (numFreq, numTilesPerFreq, 1). Each WG handles one tile of WG elements.
+    const uint elems = pc.endPos - pc.startPos;
+    const uint tiles = (elems + WG - 1u) / WG;
+    const uint tile_ix = gl_WorkGroupID.y;
+
+    uint baseRead  = pc.startPos + tile_ix * WG;
+    uint baseWrite = frequency_ix * elems + pc.startPos + tile_ix * WG;
+
+    // ---- 1) Load and compute lane contribution x = mag ----
+    uint idx = baseRead + tid;
+    bool inBounds = (idx < pc.endPos);
+
+    float x = 0.0;
+    if (inBounds) {
+        float sample = input_buffer[idx];
+        float phase = 2.0 * PI * (float(idx) * f) / pc.sampleFrequency;
+        float c = cos(phase);
+        float s = sin(phase);
+        float re  =  sample * c * normalFactor;
+        float im  = -sample * s * normalFactor;
+        x = sqrt(re*re + im*im);
+    }
+
+    // ---- 2) Subgroup scan within tile ----
+    float sgPrefix = subgroupExclusiveAdd(x);
+    float sgSum    = subgroupAdd(x);
+    if (lane == gl_SubgroupSize() - 1) sgTotals[sg] = sgSum;
+    barrier();
+
+    float sgOffset = 0.0;
+    for (uint s = 0u; s < sg; ++s) sgOffset += sgTotals[s];
+
+    // Tile-local inclusive prefix (before adding DLB offset)
+    float P_local = sgOffset + sgPrefix + x;
+
+    // Compute tile sum (workgroup total)
+    if (lane == 0) sgTotals[sg] = sgSum;
+    barrier();
+    float wgSum = 0.0;
+    if (tid == 0) {
+        for (uint s = 0u; s < gl_NumSubgroups; ++s) wgSum += sgTotals[s];
+        iterCarry = wgSum; // stash in shared
+    }
+    barrier();
+    wgSum = iterCarry;
+
+    // ---- 3) Decoupled look-back to get offset from previous tiles ----
+    const uint tileCount = tiles;
+    uint tileKey = frequency_ix * tileCount + tile_ix;
+
+    float tileOffset = 0.0;
+    if (tile_ix == 0u) {
+        if (tid == 0) {
+            dlb_prefix[tileKey] = wgSum;            // prefix up to and incl. tile 0
+            atomicExchange(dlb_ready[tileKey], 1u);
+        }
+    } else {
+        // Binary lifting: accumulate prefixes of earlier tiles
+        uint lookback = 1u;
+        float accum = 0.0;
+        while (lookback <= tile_ix) {
+            uint prevTile = tile_ix - lookback;
+            uint prevKey  = frequency_ix * tileCount + prevTile;
+            // Wait until that tile published its prefix
+            while (atomicAdd(dlb_ready[prevKey], 0u) == 0u) { /* spin */ }
+            accum += dlb_prefix[prevKey];
+            lookback <<= 1u;
+        }
+        tileOffset = accum;
+
+        if (tid == 0) {
+            dlb_prefix[tileKey] = wgSum;            // expose our tile sum for successors
+            atomicExchange(dlb_ready[tileKey], 1u);
+        }
+    }
+    barrier();
+
+    // ---- 4) Global inclusive prefix P(i) = tileOffset + P_local ----
+    float P = tileOffset + P_local;
+
+    // Stage per-tile P into shared so lanes can read P[i - W] within the same tile
+    tileP[tid] = P;
+    barrier();
+
+    // ---- 5) Sliding window: window(i) = P(i) - P(i-W) ----
+    float window = P; // default when W==0 or i < start+W
+    if (W != 0u && inBounds) {
+        uint posInStream = (idx - pc.startPos); // 0-based within this frequency
+        if (posInStream >= W) {
+            // Determine whether (i - W) sits in this tile or a previous tile
+            uint posInTile   = tid;
+            if (posInTile >= W) {
+                // Same tile: read from shared tileP
+                float P_prevW_local = tileP[tid - W];
+                window = P - P_prevW_local;
+            } else {
+                // Previous tile(s): ensure that tile is ready, then read from global prefix buffer
+                // Which tile contains i-W?
+                uint globalIndexPrev = (idx - W);
+                uint prevTileIx      = (globalIndexPrev - pc.startPos) / WG;
+                uint prevKey         = frequency_ix * tileCount + prevTileIx;
+                // Wait until that tile finished (conservative)
+                while (atomicAdd(dlb_ready[prevKey], 0u) == 0u) { /* spin */ }
+
+                float P_prevW = prefix_buffer[frequency_ix * elems + globalIndexPrev];
+                window = P - P_prevW;
+            }
+        } else {
+            // i < W: window is just P
+            window = P;
+        }
+    }
+
+    // ---- 6) Publish: write P to prefix_buffer (for future tiles), window to output ----
+    if (inBounds) {
+        prefix_buffer[frequency_ix * elems + (idx - pc.startPos)] = P;
+        output_buffer[baseWrite + tid] = window;
+    }
+#endif
 }

@@ -46,6 +46,26 @@ def create_heatmap(data, frequencies, sample_rate, output_path="heatmap.png"):
     
     print(f"Heatmap saved to {output_path}")
 
+def opencv_heatmap(heatmap_data, output_path="heatmap_opencv.png"):
+    heatmap_normalized = cv2.normalize(heatmap_data, None, 0, 255, cv2.NORM_MINMAX)
+    heatmap_uint8 = heatmap_normalized.astype(np.uint8)
+    heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_VIRIDIS)
+    
+    # Resize for better visualization (only if dimensions are valid)
+    height, width = heatmap_colored.shape[:2]
+    print(f"Original heatmap size: {width}x{height}")
+    if height > 0 and width > 0:
+        new_height = height
+        new_width = 1000
+        if new_width > 0 and new_height > 0:
+            heatmap_resized = cv2.resize(heatmap_colored, (new_width, new_height))
+            cv2.imwrite(output_path, heatmap_resized)
+            print("OpenCV heatmap saved to loiacono_heatmap_cv2.png")
+        else:
+            print("Skipping OpenCV heatmap: invalid resize dimensions")
+    else:
+        print("Skipping OpenCV heatmap: invalid image dimensions")
+
 def main():
     # Initialize FFI
     ffi = FFI()
@@ -79,6 +99,7 @@ def main():
     amplitude=0.5
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
     audio_data = amplitude * np.sin(2 * np.pi * frequency * t)
+    audio_data = audio_data.astype(np.float32, copy=False)
 
     print(f"Generated {len(audio_data)} samples at {sample_rate}Hz sample rate")
     
@@ -91,11 +112,16 @@ def main():
     frequencies = np.logspace(np.log10(start_freq), np.log10(end_freq), num_freqs, dtype=np.float32)
     print(f"Generated frequencies from {frequencies[0]:.1f}Hz to {frequencies[-1]:.1f}Hz")
     
+    frequencies = np.array([220, 440.0, 660, 880], dtype=np.float32) 
+    frequencies = np.array([440.0], dtype=np.float32) 
     # Prepare output data buffer - we need space for all frequencies x time samples
     # Each frequency will produce output for the entire audio duration
+    print(f"audio data {audio_data}")
+    print(f"length {len(audio_data)}")
+    print(f"frequencies {frequencies}")
     total_output_size = len(audio_data) * len(frequencies)
     output_data = np.zeros(total_output_size, dtype=np.float32)
-    
+
     # Create FFI-compatible structures
     audio_vec = ffi.new("FloatVector*")
     audio_vec.data = ffi.cast("float*", ffi.from_buffer(audio_data))
@@ -108,7 +134,7 @@ def main():
     freq_vec = ffi.new("FloatVector*")
     freq_vec.data = ffi.cast("float*", ffi.from_buffer(frequencies))
     freq_vec.size = len(frequencies)
-    multiple = 5
+    multiple = 1
     
     # Call the loiacono function
     print("Calling loiacono function...")
@@ -123,38 +149,25 @@ def main():
     
     # Reshape output for heatmap (time x frequencies)
     # The loiacono function processes each frequency and stores results
-    heatmap_data = output_data.reshape(-1, len(frequencies))
+    heatmap_data = output_data.reshape(len(frequencies), len(audio_data))
+    print(heatmap_data)
+    print(f"sum: {np.sum(heatmap_data)}")
+    
+    plt.plot(output_data)
+    plt.title("Input Audio Signal (440Hz Sine Wave)")
+    plt.xlabel("Sample Index")
+    plt.ylabel("Amplitude")
+    plt.grid()
+    plt.show()
+    plt.waitforbuttonpress()
     
     # Create and save heatmap
     print("Creating heatmap visualization...")
-    create_heatmap(heatmap_data, frequencies, sample_rate, "loiacono_heatmap.png")
+    #create_heatmap(heatmap_data, frequencies, sample_rate, "loiacono_heatmap.png")
     
     # Also save with OpenCV for comparison (only if data is valid)
     try:
-        # Handle any NaN/inf values in heatmap_data
-        heatmap_data_clean = np.nan_to_num(heatmap_data, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        # Check if data has any non-zero values
-        if np.any(heatmap_data_clean != 0):
-            heatmap_normalized = cv2.normalize(heatmap_data_clean, None, 0, 255, cv2.NORM_MINMAX)
-            heatmap_uint8 = heatmap_normalized.astype(np.uint8)
-            heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_VIRIDIS)
-            
-            # Resize for better visualization (only if dimensions are valid)
-            height, width = heatmap_colored.shape[:2]
-            if height > 0 and width > 0:
-                new_height = 800
-                new_width = int(width * (new_height / height))
-                if new_width > 0 and new_height > 0:
-                    heatmap_resized = cv2.resize(heatmap_colored, (new_width, new_height))
-                    cv2.imwrite("loiacono_heatmap_cv2.png", heatmap_resized)
-                    print("OpenCV heatmap saved to loiacono_heatmap_cv2.png")
-                else:
-                    print("Skipping OpenCV heatmap: invalid resize dimensions")
-            else:
-                print("Skipping OpenCV heatmap: invalid image dimensions")
-        else:
-            print("Skipping OpenCV heatmap: all data is zero")
+        opencv_heatmap(heatmap_data, "loiacono_heatmap_cv2.png")
     except Exception as e:
         print(f"Error creating OpenCV heatmap: {e}")
         print("Continuing without OpenCV heatmap")
