@@ -1,6 +1,6 @@
 #version 450
 
-#define THREADS_PER_WORKGROUP 32u // Warp size on nVidia hardware
+#define THREADS_PER_WORKGROUP 128u
 #define RING_BUFFER_MAX_SIZE  4096u
 #define PI 3.1415926
 

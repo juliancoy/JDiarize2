@@ -1,0 +1,82 @@
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_basic : require
+
+#define THREADS_PER_WORKGROUP 128u
+#define MAX_SUBGROUPS 32u
+
+layout(push_constant) uniform Push {
+    uint  startPos;
+    uint  endPos;
+    uint  numFrequencies;
+} pc;
+
+layout(std430, set = 0, binding = 0) readonly  buffer MagnitudeBuf { float magnitude_buffer[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer PrefixSumBuf  { float prefix_sum_buffer[]; };
+
+layout (local_size_x = THREADS_PER_WORKGROUP) in;
+
+shared float subgroup_totals[MAX_SUBGROUPS];
+
+void main() {
+    uint frequency_ix = gl_WorkGroupID.x;
+    uint thread_ix = gl_LocalInvocationID.x;
+    uint subgroup_id = gl_SubgroupID;
+    
+    // Calculate the start index for this frequency band in the magnitude buffer
+    uint band_size = pc.endPos - pc.startPos;
+    uint band_start = frequency_ix * band_size;
+    
+    // Calculate the global index for this thread
+    uint global_index = band_start + thread_ix;
+    
+    // Initialize local value
+    float value = 0.0;
+    if (thread_ix < band_size) {
+        value = magnitude_buffer[global_index];
+    }
+    
+    // --- FIRST PASS: Compute subgroup prefix sums ---
+    float subgroup_prefix = subgroupInclusiveAdd(value);
+    
+    // Store the subgroup-local prefix sum
+    if (thread_ix < band_size) {
+        prefix_sum_buffer[global_index] = subgroup_prefix;
+    }
+    
+    // Get the total sum for this subgroup
+    float subgroup_total = subgroupAdd(value);
+    
+    // Store subgroup total in shared memory (only one thread per subgroup)
+    if (gl_SubgroupInvocationID == 0) {
+        subgroup_totals[subgroup_id] = subgroup_total;
+    }
+    
+    // Wait for all subgroups to store their totals
+    barrier();
+    
+    // --- SECOND PASS: Compute prefix sum of subgroup totals ---
+    if (subgroup_id == 0) {
+        // Only the first subgroup computes the prefix sum of subgroup totals
+        float subgroup_total_value = subgroup_totals[gl_SubgroupInvocationID];
+        float subgroup_total_prefix = subgroupInclusiveAdd(subgroup_total_value);
+        
+        // Store the prefix sum of subgroup totals
+        subgroup_totals[gl_SubgroupInvocationID] = subgroup_total_prefix;
+    }
+    
+    // Wait for the first subgroup to finish computing prefix sums
+    barrier();
+    
+    // --- Add the prefix sum of previous subgroup totals to each element ---
+    if (thread_ix < band_size) {
+        // Get the prefix sum of all subgroups before the current one
+        float previous_subgroups_sum = 0.0;
+        if (subgroup_id > 0) {
+            previous_subgroups_sum = subgroup_totals[subgroup_id - 1];
+        }
+        
+        // Add the prefix sum of previous subgroups to the local prefix sum
+        prefix_sum_buffer[global_index] += previous_subgroups_sum;
+    }
+}
