@@ -4,90 +4,103 @@
 // g++ -std=c++17 main.cpp -I. -lvulkan -o vulkan_audio_processor
 #include "main.h"
 
-
-void cleanupVulkan(VkInstance instance, VkDevice device) {
-    if (device != VK_NULL_HANDLE) {
+void cleanupVulkan(VkInstance instance, VkDevice device)
+{
+    if (device != VK_NULL_HANDLE)
+    {
         vkDestroyDevice(device, nullptr);
     }
-    if (instance != VK_NULL_HANDLE) {
+    if (instance != VK_NULL_HANDLE)
+    {
         vkDestroyInstance(instance, nullptr);
     }
 }
 
-VkResult readResultFromGPU(VkDevice device, VkDeviceMemory bufferMemory, float& result) {
-    void* data;
-    VkResult res = vkMapMemory(device, bufferMemory, 0, sizeof(float), 0, &data);
-    if (res != VK_SUCCESS) {
-        std::cerr << "Failed to map memory for result" << std::endl;
-        return res;
-    }
-    result = *reinterpret_cast<float*>(data);
-    vkUnmapMemory(device, bufferMemory);
-    return VK_SUCCESS;
-}
-
 void cleanupComputeResources(VkDevice device, VkPipeline pipeline, VkPipelineLayout pipelineLayout,
-                            VkShaderModule shaderModule, VkDescriptorSetLayout descriptorSetLayout,
-                            VkDescriptorPool descriptorPool, VkCommandPool commandPool,
-                            VkBuffer signalBuffer, VkDeviceMemory signalBufferMemory,
-                            VkBuffer magnitudeBuffer, VkDeviceMemory magnitudeBufferMemory,
-                            VkBuffer freqBuffer, VkDeviceMemory freqBufferMemory,
-                            VkBuffer prefixSumBuffer, VkDeviceMemory prefixSumBufferMemory) {
-    if (signalBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, signalBuffer, nullptr);
-    if (signalBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, signalBufferMemory, nullptr);
-    if (magnitudeBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, magnitudeBuffer, nullptr);
-    if (magnitudeBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, magnitudeBufferMemory, nullptr);
-    if (freqBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, freqBuffer, nullptr);
-    if (freqBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, freqBufferMemory, nullptr);
-    if (prefixSumBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, prefixSumBuffer, nullptr);
-    if (prefixSumBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, prefixSumBufferMemory, nullptr);
-    if (commandPool != VK_NULL_HANDLE) vkDestroyCommandPool(device, commandPool, nullptr);
-    if (descriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-    if (descriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-    if (shaderModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, shaderModule, nullptr);
-    if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-    if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, pipeline, nullptr);
+                             VkShaderModule shaderModule, VkDescriptorSetLayout descriptorSetLayout,
+                             VkDescriptorPool descriptorPool, VkCommandPool commandPool,
+                             VkBuffer signalBuffer, VkDeviceMemory signalBufferMemory,
+                             VkBuffer magnitudeBuffer, VkDeviceMemory magnitudeBufferMemory,
+                             VkBuffer freqBuffer, VkDeviceMemory freqBufferMemory,
+                             VkBuffer prefixSumBuffer, VkDeviceMemory prefixSumBufferMemory)
+{
+    if (signalBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, signalBuffer, nullptr);
+    if (signalBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, signalBufferMemory, nullptr);
+    if (magnitudeBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, magnitudeBuffer, nullptr);
+    if (magnitudeBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, magnitudeBufferMemory, nullptr);
+    if (freqBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, freqBuffer, nullptr);
+    if (freqBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, freqBufferMemory, nullptr);
+    if (prefixSumBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, prefixSumBuffer, nullptr);
+    if (prefixSumBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, prefixSumBufferMemory, nullptr);
+    if (commandPool != VK_NULL_HANDLE)
+        vkDestroyCommandPool(device, commandPool, nullptr);
+    if (descriptorPool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+    if (descriptorSetLayout != VK_NULL_HANDLE)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+    if (shaderModule != VK_NULL_HANDLE)
+        vkDestroyShaderModule(device, shaderModule, nullptr);
+    if (pipelineLayout != VK_NULL_HANDLE)
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+    if (pipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(device, pipeline, nullptr);
 }
 
 // C-compatible interface for Python FFI
-typedef struct {
-    void* data;
+typedef struct
+{
+    void *data;
     size_t size;
 } FloatVector;
 
 // C-compatible wrapper function
-extern "C" int loiacono(FloatVector* audioData, float sampleRate, FloatVector* magnitudeData, FloatVector* frequencies, float multiple) {
+extern "C" int loiacono(FloatVector *audioData, float sampleRate, FloatVector *magnitudeData, FloatVector *frequencies, float multiple)
+{
     // Convert FloatVector to std::vector
-    if (!audioData || !magnitudeData || !frequencies) {
+    if (!audioData || !magnitudeData || !frequencies)
+    {
         return 1; // Error: null pointers
     }
-    
-    std::vector<float> audioVec(static_cast<float*>(audioData->data), 
-                               static_cast<float*>(audioData->data) + audioData->size);
-    std::vector<float> outputVec(static_cast<float*>(magnitudeData->data), 
-                                static_cast<float*>(magnitudeData->data) + magnitudeData->size);
-    std::vector<float> freqVec(static_cast<float*>(frequencies->data), 
-                              static_cast<float*>(frequencies->data) + frequencies->size);
-    
+
+    std::vector<float> audioVec(static_cast<float *>(audioData->data),
+                                static_cast<float *>(audioData->data) + audioData->size);
+    std::vector<float> outputVec(static_cast<float *>(magnitudeData->data),
+                                 static_cast<float *>(magnitudeData->data) + magnitudeData->size);
+    std::vector<float> freqVec(static_cast<float *>(frequencies->data),
+                               static_cast<float *>(frequencies->data) + frequencies->size);
+
     // Call the C++ implementation
     int result = loiacono(&audioVec, sampleRate, &outputVec, &freqVec, multiple);
-    
+
     // Copy results back to magnitudeData (if the C++ function modified the vectors)
-    if (result == 0) {
+    if (result == 0)
+    {
         // Ensure output vectors have the same size as expected
-        if (outputVec.size() == magnitudeData->size) {
+        if (outputVec.size() == magnitudeData->size)
+        {
             std::memcpy(magnitudeData->data, outputVec.data(), outputVec.size() * sizeof(float));
-        } else {
+        }
+        else
+        {
             return 2; // Error: size mismatch
         }
     }
-    
+
     return result;
 }
 
 // ---------- Main ----------
 
-int main() {
+int main()
+{
     std::cout << "Vulkan Audio Processor" << std::endl;
     std::cout << "======================" << std::endl;
 
@@ -96,21 +109,23 @@ int main() {
     uint32_t sampleRate = 0;
     uint16_t numChannels = 0;
     float multiple = 10;
-    if (!readAudioData("audio.wav", audioData, sampleRate, numChannels)) {
+    if (!readAudioData("audio.wav", audioData, sampleRate, numChannels))
+    {
         std::cerr << "Failed to read audio data" << std::endl;
         return 1;
     }
     std::cout << "Read " << audioData.size() << " audio samples" << std::endl;
-    
+
     // Create output vector for processed results
     std::vector<float> magnitudeData(audioData.size());
     // Use default frequency of 440 Hz
-    std::vector<float> frequencies = { 440.0f };
+    std::vector<float> frequencies = {440.0f};
     loiacono(&audioData, sampleRate, &magnitudeData, &frequencies, multiple);
 }
 
-int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>* magnitudeData, 
-    std::vector<float> * frequencies, float multiple) {
+int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float> *outputData,
+             std::vector<float> *frequencies, float multiple)
+{
     // Initialize Vulkan (returns compute queue family and the queue handle)
     VkInstance instance = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
@@ -128,21 +143,27 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
     // ---- Added: Enable validation layer & debug utils extension if available ----
-    std::vector<const char*> enabledLayers;
-    std::vector<const char*> enabledExtensions;
+    std::vector<const char *> enabledLayers;
+    std::vector<const char *> enabledExtensions;
 
-    const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
-    if (isLayerAvailable(kValidationLayer)) {
+    const char *kValidationLayer = "VK_LAYER_KHRONOS_validation";
+    if (isLayerAvailable(kValidationLayer))
+    {
         enabledLayers.push_back(kValidationLayer);
         std::cout << "Enabling layer: " << kValidationLayer << std::endl;
-    } else {
+    }
+    else
+    {
         std::cout << "Validation layer not available; continuing without it." << std::endl;
     }
 
-    if (isExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
+    if (isExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
+    {
         enabledExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         std::cout << "Enabling extension: " << VK_EXT_DEBUG_UTILS_EXTENSION_NAME << std::endl;
-    } else {
+    }
+    else
+    {
         std::cout << "VK_EXT_debug_utils not available; continuing without it." << std::endl;
     }
     // ---------------------------------------------------------------------------
@@ -158,9 +179,12 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
 
     // If debug utils is enabled, chain a messenger create info for early validation output
     VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
-    if (!enabledExtensions.empty()) {
-        for (auto* ext : enabledExtensions) {
-            if (std::strcmp(ext, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
+    if (!enabledExtensions.empty())
+    {
+        for (auto *ext : enabledExtensions)
+        {
+            if (std::strcmp(ext, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0)
+            {
                 debugCreateInfo = {};
                 debugCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
                 debugCreateInfo.messageSeverity =
@@ -181,9 +205,12 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     VK_CHECK(vkCreateInstance(&createInfo, nullptr, &instance));
 
     // Create the debug messenger after instance creation (if extension enabled)
-    if (!enabledExtensions.empty()) {
-        for (auto* ext : enabledExtensions) {
-            if (std::strcmp(ext, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
+    if (!enabledExtensions.empty())
+    {
+        for (auto *ext : enabledExtensions)
+        {
+            if (std::strcmp(ext, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0)
+            {
                 VkDebugUtilsMessengerCreateInfoEXT ci = {};
                 ci.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
                 ci.messageSeverity =
@@ -194,7 +221,8 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
                     VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                     VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
                 ci.pfnUserCallback = DebugCallback;
-                if (CreateDebugUtilsMessengerEXT(instance, &ci, nullptr, &g_debugMessenger) != VK_SUCCESS) {
+                if (CreateDebugUtilsMessengerEXT(instance, &ci, nullptr, &g_debugMessenger) != VK_SUCCESS)
+                {
                     std::cerr << "Failed to create debug messenger (continuing)" << std::endl;
                 }
                 break;
@@ -205,10 +233,12 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     // Enumerate physical devices
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
-    if (deviceCount == 0) {
+    if (deviceCount == 0)
+    {
         std::cerr << "No Vulkan devices found" << std::endl;
         // Destroy debug messenger (if created) before destroying instance
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -220,15 +250,19 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
 
     // Choose first device with a compute queue
     physicalDevice = VK_NULL_HANDLE;
-    for (auto pd : devices) {
-        if (findComputeQueueFamily(pd, computeQueueFamilyIndex)) {
+    for (auto pd : devices)
+    {
+        if (findComputeQueueFamily(pd, computeQueueFamilyIndex))
+        {
             physicalDevice = pd;
             break;
         }
     }
-    if (physicalDevice == VK_NULL_HANDLE) {
+    if (physicalDevice == VK_NULL_HANDLE)
+    {
         std::cerr << "No compute-capable Vulkan device found" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -253,9 +287,11 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
 
     // Retrieve the queue from that same family
     vkGetDeviceQueue(device, computeQueueFamilyIndex, 0, &computeQueue);
-    if (computeQueue == VK_NULL_HANDLE) {
+    if (computeQueue == VK_NULL_HANDLE)
+    {
         std::cerr << "Failed to get compute device queue" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -310,8 +346,8 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     // Pipeline layout + push constants
     VkPushConstantRange pcRange = {};
     pcRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcRange.offset     = 0;
-    pcRange.size       = sizeof(PushConstants);
+    pcRange.offset = 0;
+    pcRange.size = sizeof(PushConstants);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -327,38 +363,64 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     // Load SPIR-V and create shader module
     std::vector<uint32_t> spirv;
     result = loadSpirvFile("magnitude.comp.spv", spirv);
-    if (result != VK_SUCCESS) {
+    if (result != VK_SUCCESS)
+    {
         std::cerr << "Failed to load SPIR-V for compute shader" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
         return result;
     }
 
-    VkShaderModuleCreateInfo smci = {};
-    smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    smci.codeSize = spirv.size() * sizeof(uint32_t);
-    smci.pCode    = spirv.data();
+    // Load prefix sum SPIR-V
+    std::vector<uint32_t> prefixSpv;
+    VK_CHECK(loadSpirvFile("prefix_sum.comp.spv", prefixSpv));
 
-    result = vkCreateShaderModule(device, &smci, nullptr, &magnitudeShaderModule);
+    VkShaderModuleCreateInfo prefix_sum_smci{};
+    prefix_sum_smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    prefix_sum_smci.codeSize = prefixSpv.size() * sizeof(uint32_t);
+    prefix_sum_smci.pCode = prefixSpv.data();
+    VK_CHECK(vkCreateShaderModule(device, &prefix_sum_smci, nullptr, &prefixSumShaderModule));
+
+    VkPipelineShaderStageCreateInfo prefixStage{};
+    prefixStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    prefixStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    prefixStage.module = prefixSumShaderModule;
+    prefixStage.pName = "main";
+
+    VkComputePipelineCreateInfo prefixPipeInfo{};
+    prefixPipeInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    prefixPipeInfo.stage = prefixStage;
+    prefixPipeInfo.layout = pipelineLayout; // same layout if bindings match
+    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &prefixPipeInfo, nullptr, &prefixSumPipeline));
+
+    VkShaderModuleCreateInfo magnitude_smci = {};
+    magnitude_smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    magnitude_smci.codeSize = spirv.size() * sizeof(uint32_t);
+    magnitude_smci.pCode = spirv.data();
+
+    result = vkCreateShaderModule(device, &magnitude_smci, nullptr, &magnitudeShaderModule);
     VK_CHECK(result);
 
-    VkPipelineShaderStageCreateInfo shaderStageInfo = {};
-    shaderStageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    shaderStageInfo.module = magnitudeShaderModule;
-    shaderStageInfo.pName  = "main";
+    VkPipelineShaderStageCreateInfo magnitudeShaderStageInfo = {};
+    magnitudeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    magnitudeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    magnitudeShaderStageInfo.module = magnitudeShaderModule;
+    magnitudeShaderStageInfo.pName = "main";
 
     VkComputePipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.stage  = shaderStageInfo;
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.stage = magnitudeShaderStageInfo;
     pipelineInfo.layout = pipelineLayout;
 
     result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &magnitudePipeline);
-    if (result != VK_SUCCESS) {
+    if (result != VK_SUCCESS)
+    {
         std::cerr << "Failed to create compute pipeline" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -405,8 +467,10 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
 
     result = vkAllocateCommandBuffers(device, &cmdBufferInfo, &commandBuffer);
 
-    if (result != VK_SUCCESS) {
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+    if (result != VK_SUCCESS)
+    {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -449,11 +513,14 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
 
-    auto findHostVisibleCoherent = [&](uint32_t typeBits)->uint32_t {
-        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+    auto findHostVisibleCoherent = [&](uint32_t typeBits) -> uint32_t
+    {
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+        {
             if ((typeBits & (1 << i)) &&
                 (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
-                (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+            {
                 return i;
             }
         }
@@ -461,9 +528,11 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     };
 
     uint32_t memoryTypeIndexIn = findHostVisibleCoherent(memRequirementsIn.memoryTypeBits);
-    if (memoryTypeIndexIn == UINT32_MAX) {
+    if (memoryTypeIndexIn == UINT32_MAX)
+    {
         std::cerr << "Failed to find suitable memory type for input" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -483,9 +552,11 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     vkGetBufferMemoryRequirements(device, magnitudeBuffer, &memRequirementsOut);
 
     uint32_t memoryTypeIndexOut = findHostVisibleCoherent(memRequirementsOut.memoryTypeBits);
-    if (memoryTypeIndexOut == UINT32_MAX) {
+    if (memoryTypeIndexOut == UINT32_MAX)
+    {
         std::cerr << "Failed to find suitable memory type for output" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -518,18 +589,22 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     vkGetBufferMemoryRequirements(device, freqBuffer, &memRequirements);
 
     uint32_t memoryTypeIndex = UINT32_MAX;
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+    {
         if ((memRequirements.memoryTypeBits & (1 << i)) &&
             (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
-            (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+        {
             memoryTypeIndex = i;
             break;
         }
     }
 
-    if (memoryTypeIndex == UINT32_MAX) {
+    if (memoryTypeIndex == UINT32_MAX)
+    {
         std::cerr << "Failed to find suitable memory type for frequency buffer" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -559,9 +634,11 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     vkGetBufferMemoryRequirements(device, prefixSumBuffer, &memRequirementsPrefix);
 
     uint32_t memoryTypeIndexPrefix = findHostVisibleCoherent(memRequirementsPrefix.memoryTypeBits);
-    if (memoryTypeIndexPrefix == UINT32_MAX) {
+    if (memoryTypeIndexPrefix == UINT32_MAX)
+    {
         std::cerr << "Failed to find suitable memory type for prefix sum buffer" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE) {
+        if (g_debugMessenger != VK_NULL_HANDLE)
+        {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
@@ -577,7 +654,7 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     VK_CHECK(vkBindBufferMemory(device, prefixSumBuffer, prefixSumBufferMemory, 0));
 
     // Copy audio data to GPU (input)
-    void* data;
+    void *data;
     VK_CHECK(vkMapMemory(device, signalBufferMemory, 0, audioData->size() * sizeof(float), 0, &data));
     std::memcpy(data, audioData->data(), audioData->size() * sizeof(float));
     vkUnmapMemory(device, signalBufferMemory);
@@ -589,9 +666,10 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
 
     // IMPORTANT: Initialize output buffer to 0.0f if shader accumulates into it
     {
-        void* outPtr = nullptr;
+        void *outPtr = nullptr;
         VkResult mapRes = vkMapMemory(device, magnitudeBufferMemory, 0, audioData->size() * frequencies->size() * sizeof(float), 0, &outPtr);
-        if (mapRes != VK_SUCCESS) {
+        if (mapRes != VK_SUCCESS)
+        {
             std::cerr << "Failed to map output buffer memory for initialization" << std::endl;
             cleanupComputeResources(device, magnitudePipeline, pipelineLayout, magnitudeShaderModule,
                                     descriptorSetLayout, descriptorPool, commandPool,
@@ -599,7 +677,8 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
                                     magnitudeBuffer, magnitudeBufferMemory,
                                     freqBuffer, freqBufferMemory,
                                     prefixSumBuffer, prefixSumBufferMemory);
-            if (g_debugMessenger != VK_NULL_HANDLE) {
+            if (g_debugMessenger != VK_NULL_HANDLE)
+            {
                 DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
                 g_debugMessenger = VK_NULL_HANDLE;
             }
@@ -669,10 +748,10 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
 
     // Prepare push constants (Per-dispatch scalars go here)
     PushConstants pc{};
-    pc.startPos         = 0u;
-    pc.endPos           = static_cast<uint32_t>(audioData->size());
-    pc.sampleFrequency  = static_cast<float>(sampleRate);
-    pc.multiple         = multiple; // tweak as desired; ensure ringBufferSize <= RING_BUFFER_MAX_SIZE
+    pc.startPos = 0u;
+    pc.endPos = static_cast<uint32_t>(audioData->size());
+    pc.sampleFrequency = static_cast<float>(sampleRate);
+    pc.multiple = multiple; // tweak as desired; ensure ringBufferSize <= RING_BUFFER_MAX_SIZE
 
     std::cout << "Device: " << device << std::endl;
     std::cout << "Command Buffer: " << commandBuffer << std::endl;
@@ -686,36 +765,48 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
     VK_CHECK(result);
 
-    // Bind pipeline and descriptor set
+    // Pass 1: Magnitude
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, magnitudePipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-
-    // Push constants (Per-dispatch scalars go here)
     vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstants), &pc);
-
-    // Dispatch compute
-    // EACH WORKGROUP PROCESSES A SINGLE FREQUENCY!
-    // So we launch one workgroup per frequency in X dimension.
-    std::cout << "Dispatching " << frequencyCount << " workgroups (one per frequency)" << std::endl;
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
-    VkMemoryBarrier memBarrier{};
-    memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    memBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    // Barrier: make magnitude writes visible to prefix-sum reads
+    VkMemoryBarrier toPrefix{};
+    toPrefix.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    toPrefix.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    toPrefix.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        1, &toPrefix,
+        0, nullptr,
+        0, nullptr);
 
+    // Pass 2: Prefix sum
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, prefixSumPipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+    // push constants again if the second shader needs them (often same struct)
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstants), &pc);
+    vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
+
+    // Barrier: make prefix-sum writes visible to host
+    VkMemoryBarrier toHost{};
+    toHost.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    toHost.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    toHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     vkCmdPipelineBarrier(
         commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_PIPELINE_STAGE_HOST_BIT,
         0,
-        1, &memBarrier,
+        1, &toHost,
         0, nullptr,
-        0, nullptr
-    );
+        0, nullptr);
 
-    result = vkEndCommandBuffer(commandBuffer);
-    VK_CHECK(result);
+    VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
     // Submit to the provided compute queue
     VkSubmitInfo submitInfo = {};
@@ -729,27 +820,23 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
     result = vkQueueWaitIdle(computeQueue);
     VK_CHECK(result);
 
-    // Read back a sample result (for example, the first output sample)
-    float firstSample = 0.0f;
-    vkMapMemory(device, magnitudeBufferMemory, 0, sizeof(float), 0, &data);
-    firstSample = *reinterpret_cast<float*>(data);
-    vkUnmapMemory(device, magnitudeBufferMemory);
+    // Copy entire prefix-sum output buffer to the output vector
+    if (outputData) { // <-- this is your output vector; consider renaming to prefixSumData
+        const size_t prefixSumSizeBytes = audioData->size() * frequencies->size() * sizeof(float);
+        void* outputPtr = nullptr;
 
-    std::cout << "First output sample (for inspection): " << firstSample << std::endl;
-
-    // Copy entire output buffer to output vector
-    if (magnitudeData != nullptr) {
-        void* outputPtr;
-        VkResult mapResult = vkMapMemory(device, magnitudeBufferMemory, 0, audioData->size() * frequencies->size() * sizeof(float), 0, &outputPtr);
+        VkResult mapResult = vkMapMemory(device, prefixSumBufferMemory, 0, prefixSumSizeBytes, 0, &outputPtr);
         if (mapResult == VK_SUCCESS) {
-            magnitudeData->resize(audioData->size() * frequencies->size());
-            std::memcpy(magnitudeData->data(), outputPtr, audioData->size() * frequencies->size() * sizeof(float));
-            vkUnmapMemory(device, magnitudeBufferMemory);
-            std::cout << "Copied " << magnitudeData->size() << " processed samples to output vector" << std::endl;
+            const size_t elementCount = prefixSumSizeBytes / sizeof(float);
+            outputData->resize(elementCount);
+            std::memcpy(outputData->data(), outputPtr, prefixSumSizeBytes);
+            vkUnmapMemory(device, prefixSumBufferMemory);
+            std::cout << "Copied " << outputData->size() << " prefix-sum samples to output vector" << std::endl;
         } else {
-            std::cerr << "Failed to map output buffer memory for copying to output vector" << std::endl;
+            std::cerr << "Failed to map prefix-sum buffer memory for copying to output vector" << std::endl;
         }
     }
+
 
     // Cleanup
     cleanupComputeResources(device, magnitudePipeline, pipelineLayout, magnitudeShaderModule,
@@ -760,7 +847,8 @@ int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>
                             prefixSumBuffer, prefixSumBufferMemory);
 
     // Destroy debug messenger before instance destruction
-    if (g_debugMessenger != VK_NULL_HANDLE) {
+    if (g_debugMessenger != VK_NULL_HANDLE)
+    {
         DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
         g_debugMessenger = VK_NULL_HANDLE;
     }
