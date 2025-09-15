@@ -12,10 +12,8 @@ layout(push_constant) uniform Push {
 } pc;
 
 layout(std430, set = 0, binding = 0) readonly  buffer XBuf    { float input_buffer[]; };
-layout(std430, set = 0, binding = 1) writeonly buffer LBuf    { float output_buffer[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer MagBuf  { float output_buffer[]; };
 layout(std430, set = 0, binding = 2) readonly  buffer FreqBuf { float frequency[];    };
-
-shared float ringbuffer[RING_BUFFER_MAX_SIZE];
 
 layout (local_size_x = THREADS_PER_WORKGROUP) in;
 
@@ -23,30 +21,16 @@ void main() {
     uint frequency_ix = gl_WorkGroupID.x;
     uint thread_ix    = gl_LocalInvocationID.x;
 
-    // Lane-strided initialization of the entire shared ring
-    for (uint i = thread_ix; i < RING_BUFFER_MAX_SIZE; i += THREADS_PER_WORKGROUP) {
-        ringbuffer[i] = 0.0;
-    }
-    barrier(); // make the zeros visible to all lanes
-
     float f = frequency[frequency_ix];
-    if (f <= 0.0) return;
-
-    // Compute delay length and align to lane multiple for per-thread ring logic
-    int ringBufferSize = int((1.0 / f) * pc.multiple * pc.sampleFrequency);
-
+    
     float normalFactor = inversesqrt(pc.multiple / f);
-    float runningSum = 0.0;
 
     uint signalReadIndex  = thread_ix + pc.startPos;
     uint signalWriteIndex = frequency_ix*(pc.endPos - pc.startPos) + thread_ix + pc.startPos; // should be length of audio data
-    uint ring_wr_ix      = thread_ix; // lane-strided head
-    uint ring_rd_ix      = (thread_ix + RING_BUFFER_MAX_SIZE-ringBufferSize)%RING_BUFFER_MAX_SIZE; // lane-strided head
 
     while (signalReadIndex < pc.endPos) {
         float x = input_buffer[signalReadIndex];
 
-        // Direct sin/cos per sample (you asked not to use recurrence)
         float phase = 2.0 * PI * (float(signalReadIndex) * f) / pc.sampleFrequency;
         float c = cos(phase);
         float s = sin(phase);
@@ -55,20 +39,10 @@ void main() {
         float im  = -x * s * normalFactor;
         float mag = sqrt(re*re + im*im);
 
-        float ringSub = ringbuffer[ring_rd_ix];
-
-        runningSum = runningSum + mag;// - ringSub;
-
-        output_buffer[signalWriteIndex] = runningSum;
+        output_buffer[signalWriteIndex] = mag;
         //output_buffer[signalWriteIndex] = ringSub;
-
-        // Write current value into this lane’s slot and advance by lane stride
-        ringbuffer[ring_wr_ix] = mag;
-        ring_wr_ix = (ring_wr_ix + THREADS_PER_WORKGROUP) % RING_BUFFER_MAX_SIZE;
-        ring_rd_ix = (ring_rd_ix + THREADS_PER_WORKGROUP) % RING_BUFFER_MAX_SIZE;
 
         signalReadIndex += THREADS_PER_WORKGROUP;
         signalWriteIndex += THREADS_PER_WORKGROUP;
-        barrier();
     }
 }
