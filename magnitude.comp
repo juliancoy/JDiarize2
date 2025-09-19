@@ -7,8 +7,6 @@
 layout(push_constant) uniform Push {
     uint  startPos;
     uint  endPos;
-    float sampleFrequency;
-    float multiple;
 } pc;
 
 layout(std430, set = 0, binding = 0) readonly  buffer XBuf    { float input_buffer[]; };

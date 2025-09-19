@@ -39,16 +39,22 @@ VkResult copyFrequenciesToGPU(VkDevice device, VkDeviceMemory bufferMemory, cons
 VkResult updateDescriptorSet(VkDevice device, VkDescriptorSet descriptorSet, VkBuffer inputBuffer, VkBuffer outputBuffer, VkBuffer freqBuffer);
 
 // Execute & readback
-struct PushConstants {
+struct MagnitudePushConstants {
     uint32_t startPos;
     uint32_t endPos;
-    float    sampleFrequency;
-    float    multiple;          // if truly per-dispatch; otherwise move to spec const
 };
+
+// Execute & readback
+struct PrefixSumPushConstants {
+    uint32_t startPos;
+    uint32_t endPos;
+    uint32_t combSize;
+};
+
 
 VkResult executeComputeShader(VkDevice device, VkQueue computeQueue, VkCommandBuffer commandBuffer, VkPipeline pipeline,
                              VkPipelineLayout pipelineLayout, VkDescriptorSet descriptorSet,
-                             const PushConstants& pc, uint32_t frequencyCount);
+                             const MagnitudePushConstants& pc, uint32_t frequencyCount);
 
 VkResult readResultFromGPU(VkDevice device, VkDeviceMemory bufferMemory, float& result);
 

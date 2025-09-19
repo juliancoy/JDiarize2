@@ -347,7 +347,7 @@ int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float>
     VkPushConstantRange pcRange = {};
     pcRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcRange.offset = 0;
-    pcRange.size = sizeof(PushConstants);
+    pcRange.size = sizeof(MagnitudePushConstants);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -747,11 +747,14 @@ int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float>
     vkUpdateDescriptorSets(device, 4, descriptorWrites, 0, nullptr);
 
     // Prepare push constants (Per-dispatch scalars go here)
-    PushConstants pc{};
-    pc.startPos = 0u;
-    pc.endPos = static_cast<uint32_t>(audioData->size());
-    pc.sampleFrequency = static_cast<float>(sampleRate);
-    pc.multiple = multiple; // tweak as desired; ensure ringBufferSize <= RING_BUFFER_MAX_SIZE
+    MagnitudePushConstants magnitudePC{};
+    magnitudePC.startPos = 0u;
+    magnitudePC.endPos = static_cast<uint32_t>(audioData->size());
+
+    PrefixSumPushConstants prefixsumPC{};
+    prefixsumPC.startPos = 0u;
+    prefixsumPC.endPos = static_cast<uint32_t>(audioData->size());
+    prefixsumPC.combSize = static_cast<float>(sampleRate);
 
     std::cout << "Device: " << device << std::endl;
     std::cout << "Command Buffer: " << commandBuffer << std::endl;
@@ -768,7 +771,7 @@ int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float>
     // Pass 1: Magnitude
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, magnitudePipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstants), &pc);
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &magnitudePC);
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
     // Barrier: make magnitude writes visible to prefix-sum reads
@@ -789,7 +792,7 @@ int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float>
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, prefixSumPipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
     // push constants again if the second shader needs them (often same struct)
-    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstants), &pc);
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &magnitudePC);
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
     // Barrier: make prefix-sum writes visible to host

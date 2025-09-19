@@ -3,80 +3,91 @@
 #extension GL_KHR_shader_subgroup_basic : require
 
 #define THREADS_PER_WORKGROUP 128u
-#define MAX_SUBGROUPS 32u
 
 layout(push_constant) uniform Push {
     uint  startPos;
     uint  endPos;
-    uint  numFrequencies;
+    uint  combSize;
 } pc;
 
 layout(std430, set = 0, binding = 1) readonly  buffer MagnitudeBuf { float magnitude_buffer[]; };
 layout(std430, set = 0, binding = 3) writeonly buffer PrefixSumBuf  { float prefix_sum_buffer[]; };
 
-layout (local_size_x = THREADS_PER_WORKGROUP) in;
-
-shared float subgroup_totals[MAX_SUBGROUPS];
+layout(local_size_x = THREADS_PER_WORKGROUP) in;
+shared float subgroup_totals[/*max subgroups*/ 64];  // big enough for common cases
+shared float carry_accum;                            // running sum across tiles
 
 void main() {
-    uint frequency_ix = gl_WorkGroupID.x;
-    uint thread_ix = gl_LocalInvocationID.x;
-    uint subgroup_id = gl_SubgroupID;
-    
-    // Calculate the start index for this frequency band in the magnitude buffer
-    uint band_size = pc.endPos - pc.startPos;
-    uint band_start = frequency_ix * band_size;
-    
-    // Calculate the global index for this thread
-    uint global_index = band_start + thread_ix;
-    
-    // Initialize local value
-    float value = 0.0;
-    if (thread_ix < band_size) {
-        value = magnitude_buffer[global_index];
-    }
-    
-    // --- FIRST PASS: Compute subgroup prefix sums ---
-    float subgroup_prefix = subgroupInclusiveAdd(value);
-    
-    // Store the subgroup-local prefix sum
-    if (thread_ix < band_size) {
-        prefix_sum_buffer[global_index] = subgroup_prefix;
-    }
-    
-    // Get the total sum for this subgroup
-    float subgroup_total = subgroupAdd(value);
-    
-    // Store subgroup total in shared memory (only one thread per subgroup)
-    if (gl_SubgroupInvocationID == 0) {
-        subgroup_totals[subgroup_id] = subgroup_total;
-    }
-    
-    // Wait for all subgroups to store their totals
-    barrier();
-    
-    // --- SECOND PASS: Compute prefix sum of subgroup totals ---
-    if (subgroup_id == 0) {
-        // Only the first subgroup computes the prefix sum of subgroup totals
-        float subgroup_total_value = subgroup_totals[gl_SubgroupInvocationID];
-        float subgroup_total_prefix = subgroupInclusiveAdd(subgroup_total_value);
-        
-        // Store the prefix sum of subgroup totals
-        subgroup_totals[gl_SubgroupInvocationID] = subgroup_total_prefix;
-    }
-    
-    // Wait for the first subgroup to finish computing prefix sums
-    barrier();
-    
-    // --- Add the prefix sum of previous subgroup totals to each element ---
-    if (thread_ix < band_size) {
-        // Get the prefix sum of all subgroups before the current one
-        float previous_subgroups_sum = 0.0;
-        if (subgroup_id > 0) {
-            previous_subgroups_sum = subgroup_totals[subgroup_id - 1];
+    const uint frequency_ix = gl_WorkGroupID.x;
+    const uint lane         = gl_LocalInvocationID.x;
+    const uint subgroup_id  = gl_SubgroupID;
+    const uint nSubgroups   = gl_NumSubgroups;       // runtime number of subgroups in this workgroup
+
+    const uint band_size  = pc.endPos - pc.startPos;
+    const uint band_start = frequency_ix * band_size;
+
+    // Init running carry once
+    if (lane == 0) carry_accum = 0.0;
+    barrier(); // workgroup sync (also shared mem barrier)
+
+    // Process the band in tiles of 128
+    for (uint base = 0u; base < band_size; base += THREADS_PER_WORKGROUP) {
+        const uint idx_in_band = base + lane;
+        const uint gix = band_start + idx_in_band;
+
+        // Load (with bounds check)
+        float v = 0.0;
+        if (idx_in_band < band_size) {
+            v = magnitude_buffer[gix];
         }
-        
-        // Add the prefix sum of previous subgroups to the local prefix sum
-        prefix_sum_buffer[global_index] += previous_subgroups_sum;
+
+        // ---- Pass A: subgroup inclusive prefix within this tile
+        float sprefix = subgroupInclusiveAdd(v);
+
+        // Per-subgroup total of this tile
+        float ssum = subgroupAdd(v);
+
+        // One lane per subgroup writes its total to shared memory
+        if (gl_SubgroupInvocationID == 0) {
+            subgroup_totals[subgroup_id] = ssum;
+        }
+
+        barrier(); // ensure subgroup_totals[] is fully written
+
+        // ---- Pass B: prefix over subgroup_totals using subgroup 0
+        if (subgroup_id == 0) {
+            // Only the first 'nSubgroups' entries are valid
+            float x = (gl_SubgroupInvocationID < nSubgroups) ? subgroup_totals[gl_SubgroupInvocationID] : 0.0;
+            float xprefix = subgroupInclusiveAdd(x);
+            if (gl_SubgroupInvocationID < nSubgroups) {
+                subgroup_totals[gl_SubgroupInvocationID] = xprefix;
+            }
+        }
+
+        barrier(); // subgroup_totals now holds prefix of subgroup totals
+
+        // The sum of all elements in this tile is the last valid subgroup prefix
+        float tile_sum = (lane == 0) ? subgroup_totals[nSubgroups - 1u] : 0.0;
+
+        // Broadcast carry_accum to all lanes
+        float carry_prev = carry_accum;  // shared load is fine after barrier
+
+        // Add previous-subgroup and previous-tile carries
+        float subgroups_before_sum = (subgroup_id > 0u) ? subgroup_totals[subgroup_id - 1u] : 0.0;
+        float final_prefix = sprefix + subgroups_before_sum + carry_prev;
+
+        // Store (if in bounds)
+        if (idx_in_band < band_size) {
+            prefix_sum_buffer[gix] = final_prefix;
+        }
+
+        barrier(); // make sure all lanes used carry_prev before updating carry_accum
+
+        // One lane updates the running carry for the next tile
+        if (lane == 0) {
+            carry_accum = carry_prev + tile_sum;
+        }
+
+        barrier(); // ensure new carry_accum visible before next iteration
     }
 }
