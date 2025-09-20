@@ -7,6 +7,7 @@
 layout(push_constant) uniform Push {
     uint  startPos;
     uint  endPos;
+    float multiple;    
 } pc;
 
 layout(std430, set = 0, binding = 0) readonly  buffer XBuf    { float input_buffer[]; };
@@ -29,7 +30,7 @@ void main() {
     while (signalReadIndex < pc.endPos) {
         float x = input_buffer[signalReadIndex];
 
-        float phase = 2.0 * PI * (float(signalReadIndex) * f) / pc.sampleFrequency;
+        float phase = 2.0 * PI * (float(signalReadIndex) * f);
         float c = cos(phase);
         float s = sin(phase);
 

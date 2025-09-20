@@ -77,7 +77,7 @@ def main():
             size_t size;
         } FloatVector;
         
-        int loiacono(FloatVector* audioData, float sampleRate, FloatVector* outputData, FloatVector* frequencies, float multiple);
+        int loiacono(FloatVector* audioData, FloatVector* outputData, FloatVector* frequencies, float multiple);
     """)
     
     # Load the shared library
@@ -109,7 +109,7 @@ def main():
     num_freqs=32
     print(f"Generating logspace of {num_freqs} frequencies...")
     """Generate a logarithmic space of frequencies"""
-    frequencies = np.logspace(np.log10(start_freq), np.log10(end_freq), num_freqs, dtype=np.float32)
+    frequencies = np.logspace(np.log10(start_freq), np.log10(end_freq), num_freqs, dtype=np.float32)/sample_rate
     print(f"Generated frequencies from {frequencies[0]:.1f}Hz to {frequencies[-1]:.1f}Hz")
     
     frequencies = np.array([220, 440.0, 660, 880], dtype=np.float32) 
@@ -138,7 +138,7 @@ def main():
     
     # Call the loiacono function
     print("Calling loiacono function...")
-    result = lib.loiacono(audio_vec, sample_rate, output_vec, freq_vec, multiple)
+    result = lib.loiacono(audio_vec, output_vec, freq_vec, multiple)
     
     if result != 0:
         print(f"loiacono function returned error code: {result}")

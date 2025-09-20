@@ -62,7 +62,7 @@ typedef struct
 } FloatVector;
 
 // C-compatible wrapper function
-extern "C" int loiacono(FloatVector *audioData, float sampleRate, FloatVector *magnitudeData, FloatVector *frequencies, float multiple)
+extern "C" int loiacono(FloatVector *audioData, FloatVector *magnitudeData, FloatVector *frequencies, float multiple)
 {
     // Convert FloatVector to std::vector
     if (!audioData || !magnitudeData || !frequencies)
@@ -78,7 +78,7 @@ extern "C" int loiacono(FloatVector *audioData, float sampleRate, FloatVector *m
                                static_cast<float *>(frequencies->data) + frequencies->size);
 
     // Call the C++ implementation
-    int result = loiacono(&audioVec, sampleRate, &outputVec, &freqVec, multiple);
+    int result = loiacono(&audioVec,  &outputVec, &freqVec, multiple);
 
     // Copy results back to magnitudeData (if the C++ function modified the vectors)
     if (result == 0)
@@ -120,10 +120,10 @@ int main()
     std::vector<float> magnitudeData(audioData.size());
     // Use default frequency of 440 Hz
     std::vector<float> frequencies = {440.0f};
-    loiacono(&audioData, sampleRate, &magnitudeData, &frequencies, multiple);
+    loiacono(&audioData, &magnitudeData, &frequencies, multiple);
 }
 
-int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float> *outputData,
+int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
              std::vector<float> *frequencies, float multiple)
 {
     // Initialize Vulkan (returns compute queue family and the queue handle)
@@ -750,11 +750,12 @@ int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float>
     MagnitudePushConstants magnitudePC{};
     magnitudePC.startPos = 0u;
     magnitudePC.endPos = static_cast<uint32_t>(audioData->size());
+    magnitudePC.multiple = multiple;
 
     PrefixSumPushConstants prefixsumPC{};
     prefixsumPC.startPos = 0u;
     prefixsumPC.endPos = static_cast<uint32_t>(audioData->size());
-    prefixsumPC.combSize = static_cast<float>(sampleRate);
+    prefixsumPC.combSize = 800;
 
     std::cout << "Device: " << device << std::endl;
     std::cout << "Command Buffer: " << commandBuffer << std::endl;
@@ -792,7 +793,7 @@ int loiacono(std::vector<float> *audioData, float sampleRate, std::vector<float>
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, prefixSumPipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
     // push constants again if the second shader needs them (often same struct)
-    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &magnitudePC);
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &prefixsumPC);
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
     // Barrier: make prefix-sum writes visible to host

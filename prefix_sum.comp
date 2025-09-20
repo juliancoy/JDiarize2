@@ -76,10 +76,17 @@ void main() {
         float subgroups_before_sum = (subgroup_id > 0u) ? subgroup_totals[subgroup_id - 1u] : 0.0;
         float final_prefix = sprefix + subgroups_before_sum + carry_prev;
 
+        float prev = 0.0;
         // Store (if in bounds)
         if (idx_in_band < band_size) {
-            prefix_sum_buffer[gix] = final_prefix;
+            uint lookback = pc.combSize;
+            if (idx_in_band >= lookback) {
+                // Safe because we process bands in ascending order and earlier tiles are complete
+                prev = prefix_sum_buffer[gix - lookback];
+            }
+            prefix_sum_buffer[gix] = final_prefix - prev;
         }
+
 
         barrier(); // make sure all lanes used carry_prev before updating carry_accum
 

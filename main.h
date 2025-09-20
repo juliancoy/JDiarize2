@@ -42,6 +42,7 @@ VkResult updateDescriptorSet(VkDevice device, VkDescriptorSet descriptorSet, VkB
 struct MagnitudePushConstants {
     uint32_t startPos;
     uint32_t endPos;
+    float multiple;
 };
 
 // Execute & readback
@@ -59,7 +60,7 @@ VkResult executeComputeShader(VkDevice device, VkQueue computeQueue, VkCommandBu
 VkResult readResultFromGPU(VkDevice device, VkDeviceMemory bufferMemory, float& result);
 
 // Loiacono function
-int loiacono(std::vector<float>* audioData, float sampleRate, std::vector<float>* outputData, std::vector<float>* frequencies, float multiple);
+int loiacono(std::vector<float>* audioData, std::vector<float>* outputData, std::vector<float>* frequencies, float multiple);
 
 // Cleanup helpers
 void cleanupComputeResources(VkDevice device, VkPipeline pipeline, VkPipelineLayout pipelineLayout,
