@@ -27,22 +27,19 @@ void main() {
     const uint P_band_start = wg * (N + 1u);
     const uint Y_band_start = wg * N;
 
-    // local index l := n - startPos
-    uint l = D + tid; // valid outputs for l in [D, N-1]
-
+    uint l = D - 1u + tid; // first index where a full D-window ends
     while (l < N) {
-        const uint lD = l - D;
+        const uint r = l + 1u;      // right edge (exclusive) of window in P
+        const uint l0 = r - D;      // left edge (inclusive) of window in P
 
-        // Recover samples from EXCLUSIVE prefix:
-        // x[n]   = P[l+1] - P[l]
-        // x[n-D] = P[lD+1] - P[lD]
-        const float xn = P[P_band_start + (l  + 1u)] - P[P_band_start + l];
-        const float xD = P[P_band_start + (lD + 1u)] - P[P_band_start + lD];
+        const float winSum =
+            P[P_band_start + r] - P[P_band_start + l0];
 
-        Y[Y_band_start + l] = xn - xD;  // y[n] at local l
+        Y[Y_band_start + l] = winSum / float(D);
 
         l += THREADS_PER_WORKGROUP;
     }
+
 
     // Optional: zero-fill first D outputs (l in [0..D-1]) if desired
     // for (uint z = tid; z < min(D, N); z += THREADS_PER_WORKGROUP)

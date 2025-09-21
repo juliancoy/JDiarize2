@@ -10,8 +10,11 @@ layout(push_constant) uniform Push {
     uint  combSize;
 } pc;
 
-layout(std430, set = 0, binding = 1) readonly  buffer MagnitudeBuf { float magnitude_buffer[]; };
+layout(std430, set = 0, binding = 1) readonly  buffer RealBuf { float real_buffer[]; };
+layout(std430, set = 0, binding = 5) readonly  buffer ImagBuf { float imag_buffer[]; };
 layout(std430, set = 0, binding = 3) writeonly buffer PrefixSumBuf  { float prefix_sum_buffer[]; };
+
+        //float mag = sqrt(re*re + im*im);
 
 layout(local_size_x = THREADS_PER_WORKGROUP) in;
 shared float subgroup_totals[/*max subgroups*/ 64];  // big enough for common cases

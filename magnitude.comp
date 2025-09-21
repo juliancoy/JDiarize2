@@ -11,8 +11,9 @@ layout(push_constant) uniform Push {
 } pc;
 
 layout(std430, set = 0, binding = 0) readonly  buffer XBuf    { float input_buffer[]; };
-layout(std430, set = 0, binding = 1) writeonly buffer MagBuf  { float output_buffer[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer RealBuf  { float real_buffer[]; };
 layout(std430, set = 0, binding = 2) readonly  buffer FreqBuf { float frequency[];    };
+layout(std430, set = 0, binding = 5) writeonly buffer ImagBuf  { float imag_buffer[]; };
 
 layout (local_size_x = THREADS_PER_WORKGROUP) in;
 
@@ -23,6 +24,7 @@ void main() {
     float f = frequency[frequency_ix];
     
     float normalFactor = inversesqrt(pc.multiple / f);
+    normalFactor = 1.0; // Disable normalization for now
 
     uint signalReadIndex  = thread_ix + pc.startPos;
     uint signalWriteIndex = frequency_ix*(pc.endPos - pc.startPos) + thread_ix + pc.startPos; // should be length of audio data
@@ -34,12 +36,8 @@ void main() {
         float c = cos(phase);
         float s = sin(phase);
 
-        float re  =  x * c * normalFactor;
-        float im  = -x * s * normalFactor;
-        float mag = sqrt(re*re + im*im);
-
-        output_buffer[signalWriteIndex] = mag;
-        //output_buffer[signalWriteIndex] = ringSub;
+        real_buffer[signalWriteIndex] =  x * c;// * normalFactor;
+        imag_buffer[signalWriteIndex] = -x * s;// * normalFactor;
 
         signalReadIndex += THREADS_PER_WORKGROUP;
         signalWriteIndex += THREADS_PER_WORKGROUP;

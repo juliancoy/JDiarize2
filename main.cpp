@@ -16,44 +16,6 @@ void cleanupVulkan(VkInstance instance, VkDevice device)
     }
 }
 
-void cleanupComputeResources(VkDevice device, VkPipeline pipeline, VkPipelineLayout pipelineLayout,
-                             VkShaderModule shaderModule, VkDescriptorSetLayout descriptorSetLayout,
-                             VkDescriptorPool descriptorPool, VkCommandPool commandPool,
-                             VkBuffer signalBuffer, VkDeviceMemory signalBufferMemory,
-                             VkBuffer magnitudeBuffer, VkDeviceMemory magnitudeBufferMemory,
-                             VkBuffer freqBuffer, VkDeviceMemory freqBufferMemory,
-                             VkBuffer prefixSumBuffer, VkDeviceMemory prefixSumBufferMemory)
-{
-    if (signalBuffer != VK_NULL_HANDLE)
-        vkDestroyBuffer(device, signalBuffer, nullptr);
-    if (signalBufferMemory != VK_NULL_HANDLE)
-        vkFreeMemory(device, signalBufferMemory, nullptr);
-    if (magnitudeBuffer != VK_NULL_HANDLE)
-        vkDestroyBuffer(device, magnitudeBuffer, nullptr);
-    if (magnitudeBufferMemory != VK_NULL_HANDLE)
-        vkFreeMemory(device, magnitudeBufferMemory, nullptr);
-    if (freqBuffer != VK_NULL_HANDLE)
-        vkDestroyBuffer(device, freqBuffer, nullptr);
-    if (freqBufferMemory != VK_NULL_HANDLE)
-        vkFreeMemory(device, freqBufferMemory, nullptr);
-    if (prefixSumBuffer != VK_NULL_HANDLE)
-        vkDestroyBuffer(device, prefixSumBuffer, nullptr);
-    if (prefixSumBufferMemory != VK_NULL_HANDLE)
-        vkFreeMemory(device, prefixSumBufferMemory, nullptr);
-    if (commandPool != VK_NULL_HANDLE)
-        vkDestroyCommandPool(device, commandPool, nullptr);
-    if (descriptorPool != VK_NULL_HANDLE)
-        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-    if (descriptorSetLayout != VK_NULL_HANDLE)
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-    if (shaderModule != VK_NULL_HANDLE)
-        vkDestroyShaderModule(device, shaderModule, nullptr);
-    if (pipelineLayout != VK_NULL_HANDLE)
-        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-    if (pipeline != VK_NULL_HANDLE)
-        vkDestroyPipeline(device, pipeline, nullptr);
-}
-
 // C-compatible interface for Python FFI
 typedef struct
 {
@@ -341,9 +303,19 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[6].binding = 6;
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 5;
+    layoutInfo.bindingCount = 7;
     layoutInfo.pBindings = bindings;
 
     VkResult result = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout);
@@ -509,12 +481,16 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
 
     // Create buffers for audio data
     VkBuffer signalBuffer = VK_NULL_HANDLE;
-    VkBuffer magnitudeBuffer = VK_NULL_HANDLE;
-    VkBuffer prefixSumBuffer = VK_NULL_HANDLE;
+    VkBuffer realBuffer = VK_NULL_HANDLE;
+    VkBuffer imagBuffer = VK_NULL_HANDLE;
+    VkBuffer realPrefixSumBuffer = VK_NULL_HANDLE;
+    VkBuffer imagPrefixSumBuffer = VK_NULL_HANDLE;
     VkBuffer combFilterBuffer = VK_NULL_HANDLE;
     VkDeviceMemory signalBufferMemory = VK_NULL_HANDLE;
-    VkDeviceMemory magnitudeBufferMemory = VK_NULL_HANDLE;
-    VkDeviceMemory prefixSumBufferMemory = VK_NULL_HANDLE;
+    VkDeviceMemory realBufferMemory = VK_NULL_HANDLE;
+    VkDeviceMemory imagBufferMemory = VK_NULL_HANDLE;
+    VkDeviceMemory realPrefixSumBufferMemory = VK_NULL_HANDLE;
+    VkDeviceMemory imagPrefixSumBufferMemory = VK_NULL_HANDLE;
     VkDeviceMemory combFilterBufferMemory = VK_NULL_HANDLE;
 
     // Create input buffer
@@ -526,20 +502,23 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     std::cout << "Input buffer size: " << signalBufferCreateInfo.size << " bytes" << std::endl;
 
     // Create output buffer - large enough for all frequencies
-    VkBufferCreateInfo magnitudeBufferCreateInfo = {};
-    magnitudeBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    magnitudeBufferCreateInfo.size = audioData->size() * frequencies->size() * sizeof(float);
-    std::cout << "Output buffer size: " << magnitudeBufferCreateInfo.size << " bytes" << std::endl;
+    VkBufferCreateInfo signalByFreqCountCreateInfo = {};
+    signalByFreqCountCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
 
-    magnitudeBufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    magnitudeBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    signalByFreqCountCreateInfo.size = audioData->size() * frequencies->size() * sizeof(float);
+    const VkDeviceSize signalByFreqFloatSizeBytes = signalByFreqCountCreateInfo.size;
+    std::cout << "Output buffer size: " << signalByFreqCountCreateInfo.size << " bytes" << std::endl;
+
+    signalByFreqCountCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    signalByFreqCountCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VK_CHECK(vkCreateBuffer(device, &signalBufferCreateInfo, nullptr, &signalBuffer));
-    VK_CHECK(vkCreateBuffer(device, &magnitudeBufferCreateInfo, nullptr, &magnitudeBuffer));
+    VK_CHECK(vkCreateBuffer(device, &signalByFreqCountCreateInfo, nullptr, &realBuffer));
+    VK_CHECK(vkCreateBuffer(device, &signalByFreqCountCreateInfo, nullptr, &imagBuffer));
 
     // Allocate memory for input buffer
-    VkMemoryRequirements memRequirementsIn{};
-    vkGetBufferMemoryRequirements(device, signalBuffer, &memRequirementsIn);
+    VkMemoryRequirements signalBufferRequirements{};
+    vkGetBufferMemoryRequirements(device, signalBuffer, &signalBufferRequirements);
 
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -555,52 +534,41 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
                 return i;
             }
         }
-        return UINT32_MAX;
-    };
-
-    uint32_t memoryTypeIndexIn = findHostVisibleCoherent(memRequirementsIn.memoryTypeBits);
-    if (memoryTypeIndexIn == UINT32_MAX)
-    {
         std::cerr << "Failed to find suitable memory type for input" << std::endl;
+
         if (g_debugMessenger != VK_NULL_HANDLE)
         {
             DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
             g_debugMessenger = VK_NULL_HANDLE;
         }
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-    }
+    };
 
-    VkMemoryAllocateInfo allocInfoIn = {};
-    allocInfoIn.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfoIn.allocationSize = memRequirementsIn.size;
-    allocInfoIn.memoryTypeIndex = memoryTypeIndexIn;
+    uint32_t visibleCoherentMemoryIndex = findHostVisibleCoherent(signalBufferRequirements.memoryTypeBits);
 
-    VK_CHECK(vkAllocateMemory(device, &allocInfoIn, nullptr, &signalBufferMemory));
+    VkMemoryAllocateInfo signalBufferAllocInfo = {};
+    signalBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    signalBufferAllocInfo.allocationSize = signalBufferRequirements.size;
+    signalBufferAllocInfo.memoryTypeIndex = visibleCoherentMemoryIndex;
+
+    VK_CHECK(vkAllocateMemory(device, &signalBufferAllocInfo, nullptr, &signalBufferMemory));
     VK_CHECK(vkBindBufferMemory(device, signalBuffer, signalBufferMemory, 0));
 
     // Allocate memory for output buffer
     VkMemoryRequirements memRequirementsOut{};
-    vkGetBufferMemoryRequirements(device, magnitudeBuffer, &memRequirementsOut);
+    vkGetBufferMemoryRequirements(device, realBuffer, &memRequirementsOut);
 
     uint32_t memoryTypeIndexOut = findHostVisibleCoherent(memRequirementsOut.memoryTypeBits);
-    if (memoryTypeIndexOut == UINT32_MAX)
-    {
-        std::cerr << "Failed to find suitable memory type for output" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE)
-        {
-            DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
-            g_debugMessenger = VK_NULL_HANDLE;
-        }
-        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-    }
 
     VkMemoryAllocateInfo allocInfoOut = {};
     allocInfoOut.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfoOut.allocationSize = memRequirementsOut.size;
     allocInfoOut.memoryTypeIndex = memoryTypeIndexOut;
 
-    VK_CHECK(vkAllocateMemory(device, &allocInfoOut, nullptr, &magnitudeBufferMemory));
-    VK_CHECK(vkBindBufferMemory(device, magnitudeBuffer, magnitudeBufferMemory, 0));
+    VK_CHECK(vkAllocateMemory(device, &allocInfoOut, nullptr, &realBufferMemory));
+    VK_CHECK(vkBindBufferMemory(device, realBuffer, realBufferMemory, 0));
+    VK_CHECK(vkAllocateMemory(device, &allocInfoOut, nullptr, &imagBufferMemory));
+    VK_CHECK(vkBindBufferMemory(device, imagBuffer, imagBufferMemory, 0));
 
     // Create frequency buffer (one frequency per workgroup)
     VkBuffer freqBuffer = VK_NULL_HANDLE;
@@ -656,33 +624,28 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     prefixSumBufferCreateInfo.size = audioData->size() * frequencies->size() * sizeof(float);
     prefixSumBufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     prefixSumBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    std::cout << "Prefix sum buffer size: " << prefixSumBufferCreateInfo.size << " bytes" << std::endl;
+    const VkDeviceSize prefixSumBufferSizeBytes = prefixSumBufferCreateInfo.size;
+    std::cout << "Prefix sum buffer size: " << prefixSumBufferSizeBytes << " bytes" << std::endl;
 
-    VK_CHECK(vkCreateBuffer(device, &prefixSumBufferCreateInfo, nullptr, &prefixSumBuffer));
+    VK_CHECK(vkCreateBuffer(device, &prefixSumBufferCreateInfo, nullptr, &realPrefixSumBuffer));
+    VK_CHECK(vkCreateBuffer(device, &prefixSumBufferCreateInfo, nullptr, &imagPrefixSumBuffer));
 
     // Allocate memory for prefix sum buffer
     VkMemoryRequirements memRequirementsPrefix{};
-    vkGetBufferMemoryRequirements(device, prefixSumBuffer, &memRequirementsPrefix);
+    vkGetBufferMemoryRequirements(device, realPrefixSumBuffer, &memRequirementsPrefix);
 
     uint32_t memoryTypeIndexPrefix = findHostVisibleCoherent(memRequirementsPrefix.memoryTypeBits);
-    if (memoryTypeIndexPrefix == UINT32_MAX)
-    {
-        std::cerr << "Failed to find suitable memory type for prefix sum buffer" << std::endl;
-        if (g_debugMessenger != VK_NULL_HANDLE)
-        {
-            DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
-            g_debugMessenger = VK_NULL_HANDLE;
-        }
-        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-    }
 
     VkMemoryAllocateInfo allocInfoPrefix = {};
     allocInfoPrefix.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfoPrefix.allocationSize = memRequirementsPrefix.size;
     allocInfoPrefix.memoryTypeIndex = memoryTypeIndexPrefix;
 
-    VK_CHECK(vkAllocateMemory(device, &allocInfoPrefix, nullptr, &prefixSumBufferMemory));
-    VK_CHECK(vkBindBufferMemory(device, prefixSumBuffer, prefixSumBufferMemory, 0));
+    VK_CHECK(vkAllocateMemory(device, &allocInfoPrefix, nullptr, &realPrefixSumBufferMemory));
+    VK_CHECK(vkBindBufferMemory(device, realPrefixSumBuffer, realPrefixSumBufferMemory, 0));
+
+    VK_CHECK(vkAllocateMemory(device, &allocInfoPrefix, nullptr, &imagPrefixSumBufferMemory));
+    VK_CHECK(vkBindBufferMemory(device, imagPrefixSumBuffer, imagPrefixSumBufferMemory, 0));
 
     // Create comb filter output buffer
     VkBufferCreateInfo combFilterBufferCreateInfo = {};
@@ -690,7 +653,8 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     combFilterBufferCreateInfo.size = audioData->size() * frequencies->size() * sizeof(float);
     combFilterBufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     combFilterBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    std::cout << "Comb filter buffer size: " << combFilterBufferCreateInfo.size << " bytes" << std::endl;
+    const VkDeviceSize combFilterBufferSizeBytes = combFilterBufferCreateInfo.size;
+    std::cout << "Comb filter buffer size: " << combFilterBufferSizeBytes << " bytes" << std::endl;
 
     VK_CHECK(vkCreateBuffer(device, &combFilterBufferCreateInfo, nullptr, &combFilterBuffer));
 
@@ -729,48 +693,28 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     std::memcpy(data, frequencies->data(), frequencies->size() * sizeof(float));
     vkUnmapMemory(device, freqBufferMemory);
 
-    // IMPORTANT: Initialize output buffer to 0.0f if shader accumulates into it
-    {
-        void *outPtr = nullptr;
-        VkResult mapRes = vkMapMemory(device, magnitudeBufferMemory, 0, audioData->size() * frequencies->size() * sizeof(float), 0, &outPtr);
-        if (mapRes != VK_SUCCESS)
-        {
-            std::cerr << "Failed to map output buffer memory for initialization" << std::endl;
-            cleanupComputeResources(device, magnitudePipeline, pipelineLayout, magnitudeShaderModule,
-                                    descriptorSetLayout, descriptorPool, commandPool,
-                                    signalBuffer, signalBufferMemory,
-                                    magnitudeBuffer, magnitudeBufferMemory,
-                                    freqBuffer, freqBufferMemory,
-                                    prefixSumBuffer, prefixSumBufferMemory);
-            if (g_debugMessenger != VK_NULL_HANDLE)
-            {
-                DestroyDebugUtilsMessengerEXT(instance, g_debugMessenger, nullptr);
-                g_debugMessenger = VK_NULL_HANDLE;
-            }
-            cleanupVulkan(instance, device);
-            return 1;
-        }
-        std::memset(outPtr, 0, audioData->size() * frequencies->size() * sizeof(float));
-        vkUnmapMemory(device, magnitudeBufferMemory);
-    }
-
     // Update descriptor set
     VkDescriptorBufferInfo signalBufferInfo = {};
     signalBufferInfo.buffer = signalBuffer;
     signalBufferInfo.offset = 0;
     signalBufferInfo.range = VK_WHOLE_SIZE;
 
-    VkDescriptorBufferInfo magnitudeBufferInfo = {};
-    magnitudeBufferInfo.buffer = magnitudeBuffer;
-    magnitudeBufferInfo.offset = 0;
-    magnitudeBufferInfo.range = VK_WHOLE_SIZE;
+    VkDescriptorBufferInfo realBufferInfo = {};
+    realBufferInfo.buffer = realBuffer;
+    realBufferInfo.offset = 0;
+    realBufferInfo.range = VK_WHOLE_SIZE;
+
+    VkDescriptorBufferInfo imagBufferInfo = {};
+    imagBufferInfo.buffer = imagBuffer;
+    imagBufferInfo.offset = 0;
+    imagBufferInfo.range = VK_WHOLE_SIZE;
 
     VkDescriptorBufferInfo freqBufferInfo = {};
     freqBufferInfo.buffer = freqBuffer;
     freqBufferInfo.offset = 0;
     freqBufferInfo.range = VK_WHOLE_SIZE;
 
-    VkWriteDescriptorSet descriptorWrites[5] = {};
+    VkWriteDescriptorSet descriptorWrites[6] = {};
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSet;
     descriptorWrites[0].dstBinding = 0;
@@ -785,7 +729,7 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     descriptorWrites[1].dstArrayElement = 0;
     descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descriptorWrites[1].descriptorCount = 1;
-    descriptorWrites[1].pBufferInfo = &magnitudeBufferInfo;
+    descriptorWrites[1].pBufferInfo = &realBufferInfo;
 
     descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[2].dstSet = descriptorSet;
@@ -796,10 +740,10 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     descriptorWrites[2].pBufferInfo = &freqBufferInfo;
 
     // Add descriptor for prefix sum output buffer (binding 3)
-    VkDescriptorBufferInfo prefixSumBufferInfo = {};
-    prefixSumBufferInfo.buffer = prefixSumBuffer;
-    prefixSumBufferInfo.offset = 0;
-    prefixSumBufferInfo.range = VK_WHOLE_SIZE;
+    VkDescriptorBufferInfo realPrefixSumBufferInfo = {};
+    realPrefixSumBufferInfo.buffer = realPrefixSumBuffer;
+    realPrefixSumBufferInfo.offset = 0;
+    realPrefixSumBufferInfo.range = VK_WHOLE_SIZE;
 
     descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[3].dstSet = descriptorSet;
@@ -807,7 +751,7 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     descriptorWrites[3].dstArrayElement = 0;
     descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descriptorWrites[3].descriptorCount = 1;
-    descriptorWrites[3].pBufferInfo = &prefixSumBufferInfo;
+    descriptorWrites[3].pBufferInfo = &realPrefixSumBufferInfo;
 
     // Add descriptor for comb filter output buffer (binding 4)
     VkDescriptorBufferInfo combFilterBufferInfo = {};
@@ -823,18 +767,29 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     descriptorWrites[4].descriptorCount = 1;
     descriptorWrites[4].pBufferInfo = &combFilterBufferInfo;
 
-    vkUpdateDescriptorSets(device, 5, descriptorWrites, 0, nullptr);
+    descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[5].dstSet = descriptorSet;
+    descriptorWrites[5].dstBinding = 5;
+    descriptorWrites[5].dstArrayElement = 0;
+    descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[5].descriptorCount = 1;
+    descriptorWrites[5].pBufferInfo = &imagBufferInfo;
 
-    // Prepare push constants (Per-dispatch scalars go here)
-    MagnitudePushConstants magnitudePC{};
-    magnitudePC.startPos = 0u;
-    magnitudePC.endPos = static_cast<uint32_t>(audioData->size());
-    magnitudePC.multiple = multiple;
+    // Add descriptor for prefix sum output buffer (binding 3)
+    VkDescriptorBufferInfo imagPrefixSumBufferInfo = {};
+    imagPrefixSumBufferInfo.buffer = imagPrefixSumBuffer;
+    imagPrefixSumBufferInfo.offset = 0;
+    imagPrefixSumBufferInfo.range = VK_WHOLE_SIZE;
 
-    PrefixSumPushConstants prefixsumPC{};
-    prefixsumPC.startPos = 0u;
-    prefixsumPC.endPos = static_cast<uint32_t>(audioData->size());
-    prefixsumPC.combSize = 800;
+    descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[6].dstSet = descriptorSet;
+    descriptorWrites[6].dstBinding = 6;
+    descriptorWrites[6].dstArrayElement = 0;
+    descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[6].descriptorCount = 1;
+    descriptorWrites[6].pBufferInfo = &imagPrefixSumBufferInfo;
+
+    vkUpdateDescriptorSets(device, 6, descriptorWrites, 0, nullptr);
 
     std::cout << "Device: " << device << std::endl;
     std::cout << "Command Buffer: " << commandBuffer << std::endl;
@@ -851,6 +806,13 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     // Pass 1: Magnitude
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, magnitudePipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+
+    // Prepare push constants (Per-dispatch scalars go here)
+    MagnitudePushConstants magnitudePC{};
+    magnitudePC.startPos = 0u;
+    magnitudePC.endPos = static_cast<uint32_t>(audioData->size());
+    magnitudePC.multiple = multiple;
+
     vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &magnitudePC);
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
@@ -872,6 +834,12 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, prefixSumPipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
     // push constants again if the second shader needs them (often same struct)
+
+    PrefixSumPushConstants prefixsumPC{};
+    prefixsumPC.startPos = 0u;
+    prefixsumPC.endPos = static_cast<uint32_t>(audioData->size());
+    prefixsumPC.combSize = 800;
+
     vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &prefixsumPC);
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
@@ -928,16 +896,40 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     result = vkQueueWaitIdle(computeQueue);
     VK_CHECK(result);
 
-    // Copy entire comb filter output buffer to the output vector
-    if (outputData) {
-        const size_t combFilterSizeBytes = audioData->size() * frequencies->size() * sizeof(float);
-        void* outputPtr = nullptr;
-
-        VkResult mapResult = vkMapMemory(device, combFilterBufferMemory, 0, combFilterSizeBytes, 0, &outputPtr);
+    void* outputPtr = nullptr;
+    if (outputData || 1) // always copy prefix sum for now
+    {
+        VkResult mapResult = vkMapMemory(device, realBufferMemory, 0, signalByFreqFloatSizeBytes, 0, &outputPtr);
         if (mapResult == VK_SUCCESS) {
-            const size_t elementCount = combFilterSizeBytes / sizeof(float);
+            const size_t elementCount = signalByFreqFloatSizeBytes / sizeof(float);
             outputData->resize(elementCount);
-            std::memcpy(outputData->data(), outputPtr, combFilterSizeBytes);
+            std::memcpy(outputData->data(), outputPtr, signalByFreqFloatSizeBytes);
+            vkUnmapMemory(device, realBufferMemory);
+            std::cout << "Copied " << outputData->size() << " comb filter samples to output vector" << std::endl;
+        } else {
+            std::cerr << "Failed to map comb filter buffer memory for copying to output vector" << std::endl;
+        }
+    }
+    else if (outputData || 0) // always copy prefix sum for now
+    {
+        VkResult mapResult = vkMapMemory(device, prefixSumBufferMemory, 0, prefixSumBufferSizeBytes, 0, &outputPtr);
+        if (mapResult == VK_SUCCESS) {
+            const size_t elementCount = prefixSumBufferSizeBytes / sizeof(float);
+            outputData->resize(elementCount);
+            std::memcpy(outputData->data(), outputPtr, prefixSumBufferSizeBytes);
+            vkUnmapMemory(device, prefixSumBufferMemory);
+            std::cout << "Copied " << outputData->size() << " comb filter samples to output vector" << std::endl;
+        } else {
+            std::cerr << "Failed to map comb filter buffer memory for copying to output vector" << std::endl;
+        }
+    }
+    // Copy entire comb filter output buffer to the output vector
+    else if (outputData) {
+        VkResult mapResult = vkMapMemory(device, combFilterBufferMemory, 0, combFilterBufferSizeBytes, 0, &outputPtr);
+        if (mapResult == VK_SUCCESS) {
+            const size_t elementCount = combFilterBufferSizeBytes / sizeof(float);
+            outputData->resize(elementCount);
+            std::memcpy(outputData->data(), outputPtr, combFilterBufferSizeBytes);
             vkUnmapMemory(device, combFilterBufferMemory);
             std::cout << "Copied " << outputData->size() << " comb filter samples to output vector" << std::endl;
         } else {
@@ -947,12 +939,40 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
 
 
     // Cleanup
-    cleanupComputeResources(device, magnitudePipeline, pipelineLayout, magnitudeShaderModule,
-                            descriptorSetLayout, descriptorPool, commandPool,
-                            signalBuffer, signalBufferMemory,
-                            magnitudeBuffer, magnitudeBufferMemory,
-                            freqBuffer, freqBufferMemory,
-                            prefixSumBuffer, prefixSumBufferMemory);
+    if (signalBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, signalBuffer, nullptr);
+    if (signalBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, signalBufferMemory, nullptr);
+    if (realBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, realBuffer, nullptr);
+    if (realBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, realBufferMemory, nullptr);
+    if (imagBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, imagBuffer, nullptr);
+    if (imagBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, imagBufferMemory, nullptr);
+    if (freqBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, freqBuffer, nullptr);
+    if (freqBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, freqBufferMemory, nullptr);
+    if (prefixSumBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, prefixSumBuffer, nullptr);
+    if (prefixSumBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, prefixSumBufferMemory, nullptr);
+    if (commandPool != VK_NULL_HANDLE)
+        vkDestroyCommandPool(device, commandPool, nullptr);
+    if (descriptorPool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+    if (descriptorSetLayout != VK_NULL_HANDLE)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+    if (magnitudeShaderModule != VK_NULL_HANDLE)
+        vkDestroyShaderModule(device, magnitudeShaderModule, nullptr);
+    if (pipelineLayout != VK_NULL_HANDLE)
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+    if (magnitudePipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(device, magnitudePipeline, nullptr);
+    if (prefixSumPipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(device, prefixSumPipeline, nullptr);
     // Cleanup comb filter resources
     if (combFilterPipeline != VK_NULL_HANDLE)
         vkDestroyPipeline(device, combFilterPipeline, nullptr);
