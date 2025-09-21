@@ -455,7 +455,7 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     // Descriptor pool
     VkDescriptorPoolSize poolSizes[1] = {};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[0].descriptorCount = 5; // five storage buffers total
+    poolSizes[0].descriptorCount = 7; // five storage buffers total
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -925,7 +925,7 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     VK_CHECK(result);
 
     void* outputPtr = nullptr;
-    if (outputData || 1) // always copy prefix sum for now
+    if (outputData && 0) // always copy prefix sum for now
     {
         VkResult mapResult = vkMapMemory(device, realBufferMemory, 0, signalByFreqFloatSizeBytes, 0, &outputPtr);
         if (mapResult == VK_SUCCESS) {
@@ -938,7 +938,7 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
             std::cerr << "Failed to map comb filter buffer memory for copying to output vector" << std::endl;
         }
     }
-    else if (outputData || 0) // always copy prefix sum for now
+    else if (outputData && 0) // always copy prefix sum for now
     {
         VkResult mapResult = vkMapMemory(device, realPrefixSumBufferMemory, 0, prefixSumBufferSizeBytes, 0, &outputPtr);
         if (mapResult == VK_SUCCESS) {
