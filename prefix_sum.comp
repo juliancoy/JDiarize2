@@ -33,7 +33,7 @@ void main() {
     // Process the band in tiles of 128
     for (uint base = 0u; base < band_size; base += THREADS_PER_WORKGROUP) {
         const uint idx_in_band = base + lane;
-        const uint gix = band_start + idx_in_band;
+        const uint gix = band_start + pc.startPos + idx_in_band;
 
         // Load (with bounds check)
         float v = 0.0;
@@ -76,18 +76,11 @@ void main() {
         float subgroups_before_sum = (subgroup_id > 0u) ? subgroup_totals[subgroup_id - 1u] : 0.0;
         float final_prefix = sprefix + subgroups_before_sum + carry_prev;
 
-        float prev = 0.0;
-        // Store (if in bounds)
+        // Store (if in bounds)  — exclusive = inclusive - v
         if (idx_in_band < band_size) {
-            uint lookback = pc.combSize;
-            if (idx_in_band >= lookback) {
-                // Safe because we process bands in ascending order and earlier tiles are complete
-                prev = prefix_sum_buffer[gix - lookback];
-            }
-            prefix_sum_buffer[gix] = final_prefix - prev;
+            float final_exclusive = final_prefix - v;   // <-- change here
+            prefix_sum_buffer[gix] = final_exclusive;
         }
-
-
         barrier(); // make sure all lanes used carry_prev before updating carry_accum
 
         // One lane updates the running carry for the next tile

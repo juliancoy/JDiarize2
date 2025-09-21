@@ -1,0 +1,50 @@
+#version 450
+#define THREADS_PER_WORKGROUP 128u
+
+layout(push_constant) uniform Push {
+    uint  startPos;   // inclusive
+    uint  endPos;     // exclusive
+    float multiple;
+} pc;
+
+layout(std430, set = 0, binding = 3) readonly  buffer PrefixSumBuf { float P[]; }; // EXCLUSIVE per band, N+1 elems (P[0]=0)
+layout(std430, set = 0, binding = 4) writeonly buffer OutBuf       { float Y[]; }; // N elems per band
+layout(std430, set = 0, binding = 2) readonly  buffer FreqBuf      { float frequency[]; };
+
+layout (local_size_x = THREADS_PER_WORKGROUP) in;
+
+void main() {
+    const uint wg  = gl_WorkGroupID.x;          // band index
+    const uint tid = gl_LocalInvocationID.x;
+
+    const float f = frequency[wg];
+    const uint  D = max(1u, uint((f > 0.0 ? (1.0 / f) : 0.0) * pc.multiple));
+
+    const uint N = pc.endPos - pc.startPos;     // samples per band in this range
+    if (N == 0u || D > N) return;
+
+    // Per-band bases: P has N+1, Y has N
+    const uint P_band_start = wg * (N + 1u);
+    const uint Y_band_start = wg * N;
+
+    // local index l := n - startPos
+    uint l = D + tid; // valid outputs for l in [D, N-1]
+
+    while (l < N) {
+        const uint lD = l - D;
+
+        // Recover samples from EXCLUSIVE prefix:
+        // x[n]   = P[l+1] - P[l]
+        // x[n-D] = P[lD+1] - P[lD]
+        const float xn = P[P_band_start + (l  + 1u)] - P[P_band_start + l];
+        const float xD = P[P_band_start + (lD + 1u)] - P[P_band_start + lD];
+
+        Y[Y_band_start + l] = xn - xD;  // y[n] at local l
+
+        l += THREADS_PER_WORKGROUP;
+    }
+
+    // Optional: zero-fill first D outputs (l in [0..D-1]) if desired
+    // for (uint z = tid; z < min(D, N); z += THREADS_PER_WORKGROUP)
+    //     Y[Y_band_start + z] = 0.0;
+}

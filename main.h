@@ -52,6 +52,13 @@ struct PrefixSumPushConstants {
     uint32_t combSize;
 };
 
+// Execute & readback
+struct CombFilterPushConstants {
+    uint32_t startPos;
+    uint32_t endPos;
+    float multiple;
+};
+
 
 VkResult executeComputeShader(VkDevice device, VkQueue computeQueue, VkCommandBuffer commandBuffer, VkPipeline pipeline,
                              VkPipelineLayout pipelineLayout, VkDescriptorSet descriptorSet,

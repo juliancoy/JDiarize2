@@ -151,19 +151,31 @@ def main():
     # The loiacono function processes each frequency and stores results
     heatmap_data = output_data.reshape(len(frequencies), len(audio_data))
     print(heatmap_data)
+    heatmap_data[:,-10:] = 0.0  # Zero out the last column to avoid artifacts
     print(f"sum: {np.sum(heatmap_data)}")
     
-    plt.plot(output_data)
-    plt.title("Input Audio Signal (440Hz Sine Wave)")
+    # Plot each frequency as a different color
+    plt.figure(figsize=(12, 8))
+    
+    # Create a colormap with enough colors for all frequencies
+    colors = plt.cm.viridis(np.linspace(0, 1, len(frequencies)))
+    
+    # Plot each frequency's time series
+    for i, freq in enumerate(frequencies):
+        time_series = heatmap_data[i, :]
+        plt.plot(time_series, color=colors[i], label=f'{freq:.1f} Hz', alpha=0.7, linewidth=1)
+    
+    plt.title("Comb Filter Output for Each Frequency")
     plt.xlabel("Sample Index")
     plt.ylabel("Amplitude")
-    plt.grid()
+    plt.grid(True, alpha=0.3)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
     plt.show()
-    plt.waitforbuttonpress()
-    
-    # Create and save heatmap
+        
+    # Create and save heatmap (optional)
     print("Creating heatmap visualization...")
-    #create_heatmap(heatmap_data, frequencies, sample_rate, "loiacono_heatmap.png")
+    create_heatmap(heatmap_data, frequencies, sample_rate, "loiacono_heatmap.png")
     
     # Also save with OpenCV for comparison (only if data is valid)
     try:
