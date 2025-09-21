@@ -262,11 +262,13 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
 
     // Create compute pipelines
     VkPipeline magnitudePipeline = VK_NULL_HANDLE;
-    VkPipeline prefixSumPipeline = VK_NULL_HANDLE;
+    VkPipeline prefixSumRealPipeline = VK_NULL_HANDLE;
+    VkPipeline prefixSumImagPipeline = VK_NULL_HANDLE;
     VkPipeline combFilterPipeline = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkShaderModule magnitudeShaderModule = VK_NULL_HANDLE;
-    VkShaderModule prefixSumShaderModule = VK_NULL_HANDLE;
+    VkShaderModule prefixSumRealShaderModule = VK_NULL_HANDLE;
+    VkShaderModule prefixSumImagShaderModule = VK_NULL_HANDLE;
     VkShaderModule combFilterShaderModule = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
@@ -277,7 +279,7 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     std::cout << "Device: " << device << std::endl;
 
     // Descriptor set layout (set = 0, bindings 0, 1, 2, 3, and 4)
-    VkDescriptorSetLayoutBinding bindings[5] = {};
+    VkDescriptorSetLayoutBinding bindings[7] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -353,27 +355,49 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
         return result;
     }
 
-    // Load prefix sum SPIR-V
-    std::vector<uint32_t> prefixSpv;
-    VK_CHECK(loadSpirvFile("prefix_sum.comp.spv", prefixSpv));
+    // Load real prefix sum SPIR-V
+    std::vector<uint32_t> prefixRealSpv;
+    VK_CHECK(loadSpirvFile("prefix_sum_real.comp.spv", prefixRealSpv));
 
-    VkShaderModuleCreateInfo prefix_sum_smci{};
-    prefix_sum_smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    prefix_sum_smci.codeSize = prefixSpv.size() * sizeof(uint32_t);
-    prefix_sum_smci.pCode = prefixSpv.data();
-    VK_CHECK(vkCreateShaderModule(device, &prefix_sum_smci, nullptr, &prefixSumShaderModule));
+    VkShaderModuleCreateInfo prefix_real_smci{};
+    prefix_real_smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    prefix_real_smci.codeSize = prefixRealSpv.size() * sizeof(uint32_t);
+    prefix_real_smci.pCode = prefixRealSpv.data();
+    VK_CHECK(vkCreateShaderModule(device, &prefix_real_smci, nullptr, &prefixSumRealShaderModule));
 
-    VkPipelineShaderStageCreateInfo prefixStage{};
-    prefixStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    prefixStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    prefixStage.module = prefixSumShaderModule;
-    prefixStage.pName = "main";
+    VkPipelineShaderStageCreateInfo prefixRealStage{};
+    prefixRealStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    prefixRealStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    prefixRealStage.module = prefixSumRealShaderModule;
+    prefixRealStage.pName = "main";
 
-    VkComputePipelineCreateInfo prefixPipeInfo{};
-    prefixPipeInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    prefixPipeInfo.stage = prefixStage;
-    prefixPipeInfo.layout = pipelineLayout; // same layout if bindings match
-    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &prefixPipeInfo, nullptr, &prefixSumPipeline));
+    VkComputePipelineCreateInfo prefixRealPipeInfo{};
+    prefixRealPipeInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    prefixRealPipeInfo.stage = prefixRealStage;
+    prefixRealPipeInfo.layout = pipelineLayout; // same layout if bindings match
+    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &prefixRealPipeInfo, nullptr, &prefixSumRealPipeline));
+
+    // Load imaginary prefix sum SPIR-V
+    std::vector<uint32_t> prefixImagSpv;
+    VK_CHECK(loadSpirvFile("prefix_sum_imag.comp.spv", prefixImagSpv));
+
+    VkShaderModuleCreateInfo prefix_imag_smci{};
+    prefix_imag_smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    prefix_imag_smci.codeSize = prefixImagSpv.size() * sizeof(uint32_t);
+    prefix_imag_smci.pCode = prefixImagSpv.data();
+    VK_CHECK(vkCreateShaderModule(device, &prefix_imag_smci, nullptr, &prefixSumImagShaderModule));
+
+    VkPipelineShaderStageCreateInfo prefixImagStage{};
+    prefixImagStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    prefixImagStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    prefixImagStage.module = prefixSumImagShaderModule;
+    prefixImagStage.pName = "main";
+
+    VkComputePipelineCreateInfo prefixImagPipeInfo{};
+    prefixImagPipeInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    prefixImagPipeInfo.stage = prefixImagStage;
+    prefixImagPipeInfo.layout = pipelineLayout; // same layout if bindings match
+    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &prefixImagPipeInfo, nullptr, &prefixSumImagPipeline));
 
     // Load comb filter SPIR-V
     std::vector<uint32_t> combSpv;
@@ -714,7 +738,7 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     freqBufferInfo.offset = 0;
     freqBufferInfo.range = VK_WHOLE_SIZE;
 
-    VkWriteDescriptorSet descriptorWrites[6] = {};
+    VkWriteDescriptorSet descriptorWrites[7] = {};
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSet;
     descriptorWrites[0].dstBinding = 0;
@@ -830,16 +854,20 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
         0, nullptr,
         0, nullptr);
 
-    // Pass 2: Prefix sum
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, prefixSumPipeline);
+    // Pass 2: Real and Imaginary prefix sum (run simultaneously)
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, prefixSumRealPipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-    // push constants again if the second shader needs them (often same struct)
 
     PrefixSumPushConstants prefixsumPC{};
     prefixsumPC.startPos = 0u;
     prefixsumPC.endPos = static_cast<uint32_t>(audioData->size());
     prefixsumPC.combSize = 800;
 
+    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &prefixsumPC);
+    vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, prefixSumImagPipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
     vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MagnitudePushConstants), &prefixsumPC);
     vkCmdDispatch(commandBuffer, frequencyCount, 1, 1);
 
@@ -912,12 +940,12 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
     }
     else if (outputData || 0) // always copy prefix sum for now
     {
-        VkResult mapResult = vkMapMemory(device, prefixSumBufferMemory, 0, prefixSumBufferSizeBytes, 0, &outputPtr);
+        VkResult mapResult = vkMapMemory(device, realPrefixSumBufferMemory, 0, prefixSumBufferSizeBytes, 0, &outputPtr);
         if (mapResult == VK_SUCCESS) {
             const size_t elementCount = prefixSumBufferSizeBytes / sizeof(float);
             outputData->resize(elementCount);
             std::memcpy(outputData->data(), outputPtr, prefixSumBufferSizeBytes);
-            vkUnmapMemory(device, prefixSumBufferMemory);
+            vkUnmapMemory(device, realPrefixSumBufferMemory);
             std::cout << "Copied " << outputData->size() << " comb filter samples to output vector" << std::endl;
         } else {
             std::cerr << "Failed to map comb filter buffer memory for copying to output vector" << std::endl;
@@ -955,10 +983,12 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
         vkDestroyBuffer(device, freqBuffer, nullptr);
     if (freqBufferMemory != VK_NULL_HANDLE)
         vkFreeMemory(device, freqBufferMemory, nullptr);
-    if (prefixSumBuffer != VK_NULL_HANDLE)
-        vkDestroyBuffer(device, prefixSumBuffer, nullptr);
-    if (prefixSumBufferMemory != VK_NULL_HANDLE)
-        vkFreeMemory(device, prefixSumBufferMemory, nullptr);
+    if (imagPrefixSumBuffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(device, imagPrefixSumBuffer, nullptr);
+    if (imagPrefixSumBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, imagPrefixSumBufferMemory, nullptr);
+    if (realPrefixSumBufferMemory != VK_NULL_HANDLE)
+        vkFreeMemory(device, realPrefixSumBufferMemory, nullptr);
     if (commandPool != VK_NULL_HANDLE)
         vkDestroyCommandPool(device, commandPool, nullptr);
     if (descriptorPool != VK_NULL_HANDLE)
@@ -971,8 +1001,10 @@ int loiacono(std::vector<float> *audioData, std::vector<float> *outputData,
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     if (magnitudePipeline != VK_NULL_HANDLE)
         vkDestroyPipeline(device, magnitudePipeline, nullptr);
-    if (prefixSumPipeline != VK_NULL_HANDLE)
-        vkDestroyPipeline(device, prefixSumPipeline, nullptr);
+    if (prefixSumRealPipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(device, prefixSumRealPipeline, nullptr);
+    if (prefixSumImagPipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(device, prefixSumImagPipeline, nullptr);
     // Cleanup comb filter resources
     if (combFilterPipeline != VK_NULL_HANDLE)
         vkDestroyPipeline(device, combFilterPipeline, nullptr);

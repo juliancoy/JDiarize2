@@ -7,7 +7,8 @@ layout(push_constant) uniform Push {
     float multiple;
 } pc;
 
-layout(std430, set = 0, binding = 3) readonly  buffer PrefixSumBuf { float P[]; }; // EXCLUSIVE per band, N+1 elems (P[0]=0)
+layout(std430, set = 0, binding = 3) readonly  buffer RealPrefixSumBuf { float Re[]; }; // EXCLUSIVE per band, N+1 elems (P[0]=0)
+layout(std430, set = 0, binding = 6) readonly  buffer ImagPrefixSumBuf { float Im[]; }; // EXCLUSIVE per band, N+1 elems (P[0]=0)
 layout(std430, set = 0, binding = 4) writeonly buffer OutBuf       { float Y[]; }; // N elems per band
 layout(std430, set = 0, binding = 2) readonly  buffer FreqBuf      { float frequency[]; };
 
@@ -32,10 +33,12 @@ void main() {
         const uint r = l + 1u;      // right edge (exclusive) of window in P
         const uint l0 = r - D;      // left edge (inclusive) of window in P
 
-        const float winSum =
-            P[P_band_start + r] - P[P_band_start + l0];
+        const float realWinSum =
+            Re[P_band_start + r] - Re[P_band_start + l0];
+        const float imagWinSum =
+            Im[P_band_start + r] - Im[P_band_start + l0];
 
-        Y[Y_band_start + l] = winSum / float(D);
+        Y[Y_band_start + l] = sqrt(realWinSum*realWinSum + imagWinSum*imagWinSum) / float(D);
 
         l += THREADS_PER_WORKGROUP;
     }

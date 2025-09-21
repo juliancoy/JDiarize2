@@ -11,10 +11,7 @@ layout(push_constant) uniform Push {
 } pc;
 
 layout(std430, set = 0, binding = 1) readonly  buffer RealBuf { float real_buffer[]; };
-layout(std430, set = 0, binding = 5) readonly  buffer ImagBuf { float imag_buffer[]; };
-layout(std430, set = 0, binding = 3) writeonly buffer PrefixSumBuf  { float prefix_sum_buffer[]; };
-
-        //float mag = sqrt(re*re + im*im);
+layout(std430, set = 0, binding = 3) writeonly buffer RealPrefixSumBuf  { float real_prefix_sum_buffer[]; };
 
 layout(local_size_x = THREADS_PER_WORKGROUP) in;
 shared float subgroup_totals[/*max subgroups*/ 64];  // big enough for common cases
@@ -38,10 +35,10 @@ void main() {
         const uint idx_in_band = base + lane;
         const uint gix = band_start + pc.startPos + idx_in_band;
 
-        // Load (with bounds check)
+        // Load (with bounds check) - process real component
         float v = 0.0;
         if (idx_in_band < band_size) {
-            v = magnitude_buffer[gix];
+            v = real_buffer[gix];
         }
 
         // ---- Pass A: subgroup inclusive prefix within this tile
@@ -82,7 +79,7 @@ void main() {
         // Store (if in bounds)  — exclusive = inclusive - v
         if (idx_in_band < band_size) {
             float final_exclusive = final_prefix - v;   // <-- change here
-            prefix_sum_buffer[gix] = final_exclusive;
+            real_prefix_sum_buffer[gix] = final_exclusive;
         }
         barrier(); // make sure all lanes used carry_prev before updating carry_accum
 
